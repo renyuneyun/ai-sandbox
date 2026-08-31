@@ -7,9 +7,9 @@
 # All fields are optional. Uncomment and edit the values you want to change.
 # Precedence per knob: env var > workspace config > user config > built-in default.
 
-# Coding agent to run. Supported values: claude, codex.
+# Coding agent to run. Supported values: claude, codex, opencode.
 # Default: claude.
-# tool: codex
+# tool: opencode
 
 claude:
   # Claude Code version to run inside the container.
@@ -41,6 +41,26 @@ codex:
   # Custom host path mounted at ${SANDBOX_HOME}/.codex.
   # Default: ~/.codex.
   # config_dir: /path/to/custom/.codex
+
+opencode:
+  # OpenCode version to run inside the container.
+  # Default: host's opencode version; npm's latest when opencode is not installed.
+  # version: "0.6.9"
+
+  # When false, host ~/.config/opencode (opencode.json, agents, themes)
+  # is not mounted. Default: true.
+  # config_passthrough: true
+
+  # When false, host ~/.local/share/opencode (auth.json credentials and
+  # session data) is not mounted. Use OPENAI_API_KEY / ANTHROPIC_API_KEY
+  # for authentication without host auth. Default: true.
+  # data_passthrough: true
+
+  # Custom host paths mounted at ${SANDBOX_HOME}/.config/opencode and
+  # ${SANDBOX_HOME}/.local/share/opencode respectively.
+  # Default: ~/.config/opencode and ~/.local/share/opencode.
+  # config_dir: /path/to/custom/.config/opencode
+  # data_dir: /path/to/custom/.local/share/opencode
 
 proxy:
   # Forward non-empty HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and

@@ -17,7 +17,7 @@ These must not be broken without updating all affected documentation:
 - `WORKSPACE_DIR` must be exported before `docker compose up` — the compose file interpolates it.
 - `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_USERNAME`, and `SANDBOX_HOME` must be exported before `docker compose up` — the compose file interpolates them for volume paths and the user-creation entrypoint.
 - `SANDBOX_GIT_IDENTITY_NAME`, `SANDBOX_GIT_IDENTITY_EMAIL`, and `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to build `-e` and `-v` flags for `docker compose run`. Do not add them to the "must be exported" list above.
-- `SANDBOX_TOOL`, all `CLAUDE_*` and all `CODEX_*` profile knobs, `SANDBOX_PROXY_ENV_PASSTHROUGH`, `SANDBOX_CLEANUP`, `SANDBOX_GIT_POLICY_ALLOW`, `SANDBOX_GIT_POLICY_BLOCK`, and `SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to choose/configure a profile and build `-e` and `-v` flags for `docker compose run`. `GIT_MODE_ENV_ARGS` follows the same conditional-fill pattern as `GIT_ENV_ARGS` and `PROXY_ENV_ARGS` (only populated when the knob is `true`).
+- `SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*` profile knobs, `SANDBOX_PROXY_ENV_PASSTHROUGH`, `SANDBOX_CLEANUP`, `SANDBOX_GIT_POLICY_ALLOW`, `SANDBOX_GIT_POLICY_BLOCK`, and `SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to choose/configure a profile and build `-e` and `-v` flags for `docker compose run`. `GIT_MODE_ENV_ARGS` follows the same conditional-fill pattern as `GIT_ENV_ARGS` and `PROXY_ENV_ARGS` (only populated when the knob is `true`).
 - Selected-profile config mounts are in the launcher (`TOOL_VOLUME_ARGS`), not in `docker-compose.yml`. `TOOL_VOLUME_ARGS` replaces the former `CLAUDE_VOLUME_ARGS`; the compose file must not mount tool config paths.
 - Tool API keys are forwarded dynamically through `TOOL_ENV_ARGS` only when present. Do not add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` as static Compose environment entries.
 - Proxy variables are forwarded through generic `PROXY_ENV_ARGS`, not through a tool profile or static Compose entries. When enabled, collect only non-empty `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase equivalents; preserve each name and value exactly. `configure_proxy_env` must remain outside the main guard for source-level tests.
@@ -33,12 +33,12 @@ These must not be broken without updating all affected documentation:
 
 ## Config resolution
 
-Identity, git, proxy, cleanup, policy, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, and all `CODEX_*`) are resolved per-knob from four sources in priority order:
+Identity, git, proxy, cleanup, policy, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
 
 1. **Env var** (`SANDBOX_UID`, etc.) - if set and non-empty.
 2. **Workspace config** (`$WORKSPACE_DIR/.claude-sandboxed.yaml`) - if the key is present and non-null.
 3. **User config** (`${XDG_CONFIG_HOME:-$HOME/.config}/claude-sandboxed/config.yaml`) - if the key is present and non-null.
-4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. Both config passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty.
+4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty.
 
 Two bash functions in `bin/claude-sandboxed` implement this:
 
@@ -96,10 +96,13 @@ Priority order (first match wins), implemented in `bin/claude-sandboxed`:
 28. **Codex API-key isolation:** with passthrough disabled and `OPENAI_API_KEY` set, Codex starts without mounting host config.
 29. **Pinned versions:** verify both Claude and Codex YAML/env version knobs select the requested releases.
 30. **Exact passthrough:** arguments after `--`, including spaces and option-looking values, arrive unchanged.
-31. **Unsupported tool:** an unsupported `--tool` exits non-zero and lists Claude and Codex.
+31. **Unsupported tool:** an unsupported `--tool` exits non-zero and lists Claude, Codex, and OpenCode.
 32. **Concurrent profiles:** Claude and Codex containers are independent, their config binds differ, and they share only the documented per-UID `claude-agent-home` named volume.
 33. **Proxy passthrough:** set uppercase and lowercase proxy variables to distinct sentinel values; verify all non-empty values are visible inside both Claude and Codex containers and available to `npx`.
 34. **Proxy passthrough off:** set `proxy.env_passthrough: false` (and no environment override); verify none of the eight supported proxy variables is present inside the container.
+35. **OpenCode host login:** `claude-sandboxed --tool opencode` uses host `~/.config/opencode` and `~/.local/share/opencode` (auth + sessions) and the `--auto` autonomy flag.
+36. **OpenCode API-key isolation:** with both passthroughs disabled and `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) set, OpenCode starts without mounting host config or data.
+37. **OpenCode custom paths:** with `opencode.config_dir` / `opencode.data_dir` pointing at custom host paths, the container mounts them at `${SANDBOX_HOME}/.config/opencode` / `${SANDBOX_HOME}/.local/share/opencode`.
 
 ## Automated tests
 
@@ -115,7 +118,7 @@ Current test suites:
 
 - `tests/git-wrapper/test.sh` — unit tests for the git wrapper script (policy enforcement, argument parsing). Uses a stubbed real git binary so tests run on the host without Docker.
 - `tests/config/test.sh` — unit tests for config resolution (`check_config`, `resolve`). Sources the launcher directly. Requires `yq` on `PATH`; skipped if `yq` is not installed.
-- `tests/launcher/test.sh` — unit tests for launcher argument parsing, tool selection, version detection, proxy environment collection, final Docker command assembly, and Claude/Codex profile configuration.
+- `tests/launcher/test.sh` — unit tests for launcher argument parsing, tool selection, version detection, proxy environment collection, final Docker command assembly, and Claude/Codex/OpenCode profile configuration.
 
 To add a new test suite, create `tests/<component>/test.sh` and make it executable. The runner picks it up automatically. A test script should print `PASS:` / `FAIL:` lines and exit non-zero on any failure.
 

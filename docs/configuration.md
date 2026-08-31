@@ -33,7 +33,7 @@ If `yq` is not installed, config files are ignored and env vars / defaults are u
 All fields optional:
 
 ```yaml
-tool: codex                       # claude or codex; default: claude
+tool: codex                       # claude, codex or opencode; default: claude
 
 claude:
   version: "2.1.152"            # string,  default: host's claude version
@@ -45,6 +45,13 @@ codex:
   version: "1.2.3"              # string,  default: host's codex version
   config_passthrough: true      # bool,    default: true
   config_dir: ~/.codex          # string,  default: ~/.codex
+
+opencode:
+  version: "0.6.9"              # string,  default: host's opencode version
+  config_passthrough: true      # bool,    default: true
+  data_passthrough: true        # bool,    default: true
+  config_dir: ~/.config/opencode        # string, default: ~/.config/opencode
+  data_dir: ~/.local/share/opencode     # string, default: ~/.local/share/opencode
 
 proxy:
   env_passthrough: true         # bool,    default: true
@@ -140,6 +147,13 @@ codex:
   version: "1.2.3"
 ```
 
+OpenCode pins its version with `opencode.version` and `OPENCODE_VERSION`:
+
+```yaml
+opencode:
+  version: "0.6.9"
+```
+
 ## Claude config passthrough
 
 By default, the host's `~/.claude` directory and `~/.claude.json` are mounted into the container so Claude Code has credentials, skills, and settings. Disable this for a more isolated environment:
@@ -164,6 +178,15 @@ The container-side path is always `${SANDBOX_HOME}/.claude` and `${SANDBOX_HOME}
 ## Codex config passthrough
 
 Codex similarly bind-mounts the host's `~/.codex` directory read/write at `${SANDBOX_HOME}/.codex`. Disable it independently with `codex.config_passthrough: false`, or choose a custom host path with `codex.config_dir`. The matching environment overrides are `CODEX_CONFIG_PASSTHROUGH` and `CODEX_CONFIG_DIR`.
+
+## OpenCode config and data passthrough
+
+OpenCode splits its state across two host directories, and each is mounted (and toggleable) independently:
+
+- `~/.config/opencode` - `opencode.json`, agent definitions, themes. Mounted read/write at `${SANDBOX_HOME}/.config/opencode`; toggle with `opencode.config_passthrough` / `OPENCODE_CONFIG_PASSTHROUGH`; custom host path via `opencode.config_dir` / `OPENCODE_CONFIG_DIR`.
+- `~/.local/share/opencode` - `auth.json` credentials plus session/storage data. Mounted read/write at `${SANDBOX_HOME}/.local/share/opencode`; toggle with `opencode.data_passthrough` / `OPENCODE_DATA_PASSTHROUGH`; custom host path via `opencode.data_dir` / `OPENCODE_DATA_DIR`.
+
+Because the data directory contains session history, mounting it means sessions started in the sandbox appear on the host (and vice versa). Disable both passthroughs for a clean slate and authenticate with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, which opencode reads from the environment.
 
 ## Proxy environment passthrough
 
@@ -249,7 +272,7 @@ A warning is printed to stderr when `allow_local_operations: true` is combined w
 
 ## Authentication
 
-Claude Code uses `~/.claude`, `~/.claude.json`, and optionally `ANTHROPIC_API_KEY`. Codex CLI uses `~/.codex` and optionally `OPENAI_API_KEY`. Existing config paths are bind-mounted read/write by default, and passthrough can be disabled independently for each profile. API keys are forwarded only when present.
+Claude Code uses `~/.claude`, `~/.claude.json`, and optionally `ANTHROPIC_API_KEY`. Codex CLI uses `~/.codex` and optionally `OPENAI_API_KEY`. OpenCode uses `~/.local/share/opencode/auth.json` (plus config in `~/.config/opencode`) and optionally `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. Existing config paths are bind-mounted read/write by default, and passthrough can be disabled independently for each profile. API keys are forwarded only when present.
 
 ## Git policy
 

@@ -76,7 +76,7 @@ parse_launcher_args() {
         shift
         ;;
       --tool)
-        (($# >= 2)) || { launcher_error "--tool requires claude or codex"; return; }
+        (($# >= 2)) || { launcher_error "--tool requires claude, codex or opencode"; return; }
         CLI_TOOL="$2"
         shift 2
         ;;
@@ -104,8 +104,8 @@ resolve_tool() {
     selected="$(resolve SANDBOX_TOOL .tool claude)"
   fi
   case "$selected" in
-    claude|codex) echo "$selected" ;;
-    *) launcher_error "unsupported tool '$selected'; supported tools: claude, codex" ;;
+    claude|codex|opencode) echo "$selected" ;;
+    *) launcher_error "unsupported tool '$selected'; supported tools: claude, codex, opencode" ;;
   esac
 }
 
@@ -167,8 +167,29 @@ configure_tool() {
         TOOL_ENV_ARGS+=(-e OPENAI_API_KEY="$OPENAI_API_KEY")
       return 0
       ;;
+    opencode)
+      version="$(resolve OPENCODE_VERSION .opencode.version "$(detect_host_version opencode)")"
+      TOOL_PACKAGE="opencode-ai${version:+@${version}}"
+      TOOL_DEFAULT_ARGS=(--auto)
+
+      OPENCODE_CONFIG_PASSTHROUGH="$(resolve OPENCODE_CONFIG_PASSTHROUGH .opencode.config_passthrough true)"
+      OPENCODE_DATA_PASSTHROUGH="$(resolve OPENCODE_DATA_PASSTHROUGH .opencode.data_passthrough true)"
+      OPENCODE_CONFIG_DIR="$(resolve OPENCODE_CONFIG_DIR .opencode.config_dir "$HOME/.config/opencode")"
+      OPENCODE_DATA_DIR="$(resolve OPENCODE_DATA_DIR .opencode.data_dir "$HOME/.local/share/opencode")"
+      if [[ "$OPENCODE_CONFIG_PASSTHROUGH" == "true" && -d "$OPENCODE_CONFIG_DIR" ]]; then
+        TOOL_VOLUME_ARGS+=(-v "$OPENCODE_CONFIG_DIR:${SANDBOX_HOME}/.config/opencode")
+      fi
+      if [[ "$OPENCODE_DATA_PASSTHROUGH" == "true" && -d "$OPENCODE_DATA_DIR" ]]; then
+        TOOL_VOLUME_ARGS+=(-v "$OPENCODE_DATA_DIR:${SANDBOX_HOME}/.local/share/opencode")
+      fi
+      [[ -n "${ANTHROPIC_API_KEY:-}" ]] &&
+        TOOL_ENV_ARGS+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
+      [[ -n "${OPENAI_API_KEY:-}" ]] &&
+        TOOL_ENV_ARGS+=(-e OPENAI_API_KEY="$OPENAI_API_KEY")
+      return 0
+      ;;
     *)
-      launcher_error "unsupported tool '$tool'; supported tools: claude, codex"
+      launcher_error "unsupported tool '$tool'; supported tools: claude, codex, opencode"
       ;;
   esac
 }

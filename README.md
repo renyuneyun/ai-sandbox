@@ -1,6 +1,6 @@
 # claude-sandboxed
 
-Runs Claude Code or Codex CLI inside a Docker sandbox with a shared workspace mount and git push protection. The package and command remain named `claude-sandboxed`; renaming is deferred.
+Runs Claude Code, Codex CLI, or OpenCode inside a Docker sandbox with a shared workspace mount and git push protection. The package and command remain named `claude-sandboxed`; renaming is deferred.
 
 The main rationale of this project is to run Claude Code in autonomous mode (with `--dangerously-skip-permissions`) more safely, reducing harms to the user's machine / files. Whitebox protection is the main design, to provide deterministic guarantees (contrary to Anthrophic's probabilistic classifier).
 
@@ -10,7 +10,7 @@ The main rationale of this project is to run Claude Code in autonomous mode (wit
 ## Requirements
 
 - Docker with the Compose plugin (`docker compose`)
-- A valid session or API key for the selected tool (`~/.claude` / `ANTHROPIC_API_KEY`, or `~/.codex` / `OPENAI_API_KEY`)
+- A valid session or API key for the selected tool (`~/.claude` / `ANTHROPIC_API_KEY`, `~/.codex` / `OPENAI_API_KEY`, or `~/.local/share/opencode` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`)
 - `yq` (only if using config files - see [Configuration](#configuration))
 
 ## Installation
@@ -48,14 +48,15 @@ claude-sandboxed
 claude-sandboxed --tool codex
 claude-sandboxed --tool codex ~/projects/my-app
 claude-sandboxed --tool codex ~/projects/my-app -- --model gpt-5.4
+claude-sandboxed --tool opencode
 claude-sandboxed ~/projects/my-app -- --resume
 ```
 
-Claude is the default. Tool selection precedence is CLI `--tool` > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Arguments after `--` are passed unchanged to the selected tool.
+Claude is the default. Tool selection precedence is CLI `--tool` > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
 Set `CLAUDE_SANDBOXED_DIR` to override the directory containing `docker-compose.yml`.
 
-Set `CLAUDE_VERSION` or `CODEX_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
+Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
 
 ## Configuration
 
@@ -70,7 +71,7 @@ cp /usr/local/share/claude-sandboxed/config.example.yaml ~/.config/claude-sandbo
 
 Requires `yq` on the host; config files are ignored (with a warning) when `yq` is missing.
 
-See [docs/configuration.md](docs/configuration.md) for the full schema and per-knob reference: user identity, git identity, tool versions, Claude/Codex config passthrough, proxy env passthrough, cleanup, git policy config, local-override mode, and the git wrapper policy reference.
+See [docs/configuration.md](docs/configuration.md) for the full schema and per-knob reference: user identity, git identity, tool versions, Claude/Codex/OpenCode config passthrough, proxy env passthrough, cleanup, git policy config, local-override mode, and the git wrapper policy reference.
 
 ## Features
 
@@ -108,8 +109,9 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [ ] Additional paths
 - [x] **Alternative Claude config and env** - use dedicated Claude config paths, disable config passthrough, or authenticate with `ANTHROPIC_API_KEY`
 - [ ] **Network isolation** - container has its own network, isolated from the host
-- [x] **More tools** - first-class Claude Code and Codex CLI profiles
+- [x] **More tools** - first-class Claude Code, Codex CLI, and OpenCode profiles
     - [x] **Codex version** - pin Codex CLI via `CODEX_VERSION` or `codex.version`
+    - [x] **OpenCode version** - pin OpenCode via `OPENCODE_VERSION` or `opencode.version`
     - [ ] Additional built-in coding agents
 - [ ] **More runtimes** - support other runtimes than Docker
 

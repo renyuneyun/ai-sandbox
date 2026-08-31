@@ -106,7 +106,10 @@ unset SANDBOX_TOOL
 assert_eq "select: default Claude" "claude" "$(resolve_tool "")"
 SANDBOX_TOOL=codex
 assert_eq "select: environment" "codex" "$(resolve_tool "")"
+SANDBOX_TOOL=opencode
+assert_eq "select: environment opencode" "opencode" "$(resolve_tool "")"
 assert_eq "select: CLI beats environment" "claude" "$(resolve_tool claude)"
+unset SANDBOX_TOOL
 if resolve_tool unknown >/dev/null 2>&1; then bad "select: unknown tool"; else ok "select: unknown tool"; fi
 unset SANDBOX_TOOL
 
@@ -173,7 +176,7 @@ reset_profile_context() {
     PROFILE_TMP_DIRS+=("$PROFILE_TMP")
     HOME="$PROFILE_TMP/host-home"
     SANDBOX_HOME="/home/tester"
-    mkdir -p "$HOME/.claude" "$HOME/.codex"
+    mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode" "$HOME/.local/share/opencode"
     printf '{}\n' > "$HOME/.claude.json"
     WORKSPACE_CONFIG="$PROFILE_TMP/missing-workspace.yaml"
     USER_CONFIG="$PROFILE_TMP/missing-user.yaml"
@@ -181,6 +184,7 @@ reset_profile_context() {
     USER_CONFIG_VALID=false
     unset CLAUDE_VERSION CLAUDE_CONFIG_PASSTHROUGH CLAUDE_CONFIG_DIR CLAUDE_CONFIG_FILE
     unset CODEX_VERSION CODEX_CONFIG_PASSTHROUGH CODEX_CONFIG_DIR
+    unset OPENCODE_VERSION OPENCODE_CONFIG_PASSTHROUGH OPENCODE_DATA_PASSTHROUGH OPENCODE_CONFIG_DIR OPENCODE_DATA_DIR
     unset ANTHROPIC_API_KEY OPENAI_API_KEY
 }
 
@@ -237,6 +241,68 @@ configure_tool codex
 assert_eq "profile Codex: absent host CLI is unpinned" "@openai/codex" "$TOOL_PACKAGE"
 PATH="$OLD_PATH"
 
+reset_profile_context
+OPENCODE_VERSION=0.6.9
+ANTHROPIC_API_KEY=anthropic-secret
+OPENAI_API_KEY=openai-secret
+configure_tool opencode
+assert_eq "profile OpenCode: package" "opencode-ai@0.6.9" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
+assert_eq "profile OpenCode: two mounts" "4" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: config mount destination" "$HOME/.config/opencode:$SANDBOX_HOME/.config/opencode" "${TOOL_VOLUME_ARGS[1]}"
+assert_eq "profile OpenCode: data mount destination" "$HOME/.local/share/opencode:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[3]}"
+assert_eq "profile OpenCode: two API key pairs" "4" "${#TOOL_ENV_ARGS[@]}"
+[[ "$(printf '<%s>' "${TOOL_ENV_ARGS[@]}")" == *"<ANTHROPIC_API_KEY=anthropic-secret>"* &&
+   "$(printf '<%s>' "${TOOL_ENV_ARGS[@]}")" == *"<OPENAI_API_KEY=openai-secret>"* ]] &&
+  ok "profile OpenCode: both API key names forwarded" ||
+  bad "profile OpenCode: both API key names forwarded ($(printf '<%s>' "${TOOL_ENV_ARGS[@]}"))"
+
+reset_profile_context
+OPENCODE_CONFIG_PASSTHROUGH=false
+OPENCODE_DATA_PASSTHROUGH=false
+configure_tool opencode
+assert_eq "profile OpenCode: both passthroughs disabled" "0" "${#TOOL_VOLUME_ARGS[@]}"
+
+reset_profile_context
+OPENCODE_CONFIG_PASSTHROUGH=false
+configure_tool opencode
+assert_eq "profile OpenCode: config-only passthrough" "2" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: data-only mount destination" "$HOME/.local/share/opencode:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[1]}"
+
+reset_profile_context
+OPENCODE_CONFIG_DIR="$PROFILE_TMP/custom opencode config"
+OPENCODE_DATA_DIR="$PROFILE_TMP/custom opencode data"
+mkdir -p "$OPENCODE_CONFIG_DIR" "$OPENCODE_DATA_DIR"
+configure_tool opencode
+assert_eq "profile OpenCode: custom config mount preserves spaces" "$OPENCODE_CONFIG_DIR:$SANDBOX_HOME/.config/opencode" "${TOOL_VOLUME_ARGS[1]}"
+assert_eq "profile OpenCode: custom data mount preserves spaces" "$OPENCODE_DATA_DIR:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[3]}"
+
+reset_profile_context
+STUB_BIN="$PROFILE_TMP/bin"
+mkdir -p "$STUB_BIN"
+printf '#!/bin/sh\nprintf "opencode 7.7.7\\n"\n' > "$STUB_BIN/opencode"
+chmod +x "$STUB_BIN/opencode"
+OLD_PATH="$PATH"
+PATH="$STUB_BIN:$PATH"
+configure_tool opencode
+assert_eq "profile OpenCode: host version fallback" "opencode-ai@7.7.7" "$TOOL_PACKAGE"
+PATH="$OLD_PATH"
+
+reset_profile_context
+EMPTY_BIN="$PROFILE_TMP/empty-bin"
+/bin/mkdir -p "$EMPTY_BIN"
+PATH="$EMPTY_BIN"
+configure_tool opencode
+assert_eq "profile OpenCode: absent host CLI is unpinned" "opencode-ai" "$TOOL_PACKAGE"
+PATH="$OLD_PATH"
+
+reset_profile_context
+STUB_BIN="$PROFILE_TMP/absent-dirs"
+mkdir -p "$STUB_BIN"
+HOME="$PROFILE_TMP/empty-host-home"
+configure_tool opencode
+assert_eq "profile OpenCode: absent host dirs are not mounted" "0" "${#TOOL_VOLUME_ARGS[@]}"
+
 run_captured_launcher() {
     local capture_dir="$1"
     shift
@@ -253,6 +319,7 @@ run_captured_launcher() {
     SANDBOX_CLEANUP=false \
     CLAUDE_VERSION=integration-test \
     CODEX_VERSION=integration-test \
+    OPENCODE_VERSION=integration-test \
     HTTP_PROXY="${TEST_HTTP_PROXY:-}" \
     HTTPS_PROXY= ALL_PROXY= NO_PROXY= \
     http_proxy= https_proxy= all_proxy= no_proxy= \
@@ -277,6 +344,17 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
 [[ "$CAPTURED_JOINED" == *"<-e><HTTP_PROXY=http://codex-proxy.test:7890>"* ]] &&
   ok "integration: proxy reaches Codex Docker invocation" ||
   bad "integration: proxy reaches Codex Docker invocation ($CAPTURED_JOINED)"
+
+CAPTURE_DIR_OPENCODE="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_OPENCODE")
+run_captured_launcher "$CAPTURE_DIR_OPENCODE" --tool opencode "$SCRIPT_DIR/../.." -- --model "test model" resume
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<opencode-ai@integration-test"* ]] &&
+  ok "integration: OpenCode package reaches Docker" ||
+  bad "integration: OpenCode package reaches Docker ($CAPTURED_JOINED)"
+[[ "$CAPTURED_JOINED" == *"<--auto><--model><test model><resume>"* ]] &&
+  ok "integration: OpenCode defaults precede exact passthrough args" ||
+  bad "integration: OpenCode passthrough ordering ($CAPTURED_JOINED)"
 
 CAPTURE_DIR_2="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_2")
@@ -393,7 +471,7 @@ assert_rejected_before_docker() {
     fi
 }
 
-assert_rejected_before_docker "integration: unknown tool rejected" "supported tools: claude, codex" --tool unknown
+assert_rejected_before_docker "integration: unknown tool rejected" "supported tools: claude, codex, opencode" --tool unknown
 assert_rejected_before_docker "integration: missing tool rejected" "--tool requires" --tool
 assert_rejected_before_docker "integration: unknown option rejected" "unsupported option" --bad
 assert_rejected_before_docker "integration: multiple workspaces rejected" "at most one workspace" one two
