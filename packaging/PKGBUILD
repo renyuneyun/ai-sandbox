@@ -8,7 +8,8 @@ url="https://github.com/renyuneyuny/claude-sandboxed"
 license=('Apache')
 depends=('docker')
 optdepends=('nodejs: npx runtime for the optional on-host Playwright MCP browser service'
-            'chromium: headed browser driven by the optional Playwright MCP browser service')
+            'chromium: headed browser driven by the optional Playwright MCP browser service'
+            'playwright-mcp: the Playwright MCP server for the optional on-host browser service (AUR)')
 source=()
 sha256sums=()
 
