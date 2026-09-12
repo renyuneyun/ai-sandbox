@@ -58,6 +58,30 @@ launcher_error() {
   return 2
 }
 
+# Best-effort reachability check for the host-side Playwright MCP endpoint.
+# Returns 0 when a TCP connection to the URL's authority succeeds. Portable
+# (bash /dev/tcp, no external `timeout`), with a short deadline so dropped
+# packets don't hang the launcher. Always returns 1 for malformed/non-http URLs.
+browser_endpoint_reachable() {  # URL
+  local url="$1"
+  [[ "$url" == http://* || "$url" == https://* ]] || return 1
+  local hostport="${url#*://}"; hostport="${hostport%%/*}"
+  local host="${hostport%:*}" port="${hostport##*:}"
+  [[ -n "$port" && "$host" != "$port" ]] || return 1
+  local pid i rc
+  ( exec 3<>"/dev/tcp/$host/$port" ) 2>/dev/null &
+  pid=$!
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null; return $?
+    fi
+    sleep 0.1
+  done
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  return 1
+}
+
 parse_launcher_args() {
   CLI_TOOL=""
   CLI_ALLOW_LOCAL_GIT=""
@@ -378,6 +402,12 @@ EOF
     BROWSER_VOLUME_ARGS+=(-v "$MCP_CONFIG_FILE:/etc/claude-sandboxed/mcp-config.json:ro")
     if [[ "$SELECTED_TOOL" == claude ]]; then
         TOOL_DEFAULT_ARGS+=(--mcp-config /etc/claude-sandboxed/mcp-config.json)
+    fi
+    # Hint how to start the on-host browser service when it is not reachable.
+    if ! browser_endpoint_reachable "$SANDBOX_BROWSER_MCP_URL"; then
+        echo "claude-sandboxed: browser MCP endpoint $SANDBOX_BROWSER_MCP_URL is not reachable." >&2
+        echo "claude-sandboxed: to use the on-host browser, start the service with:" >&2
+        echo "claude-sandboxed:   systemctl --user enable --now claude-sandboxed-playwright" >&2
     fi
 fi
 

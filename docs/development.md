@@ -108,6 +108,7 @@ Priority order (first match wins), implemented in `bin/claude-sandboxed`:
 39. **Browser enabled (Claude):** with `browser.enabled: true`, `PLAYWRIGHT_MCP_URL` is passed, the mcp-config is mounted read-only, and Claude's Docker args include `--mcp-config /etc/claude-sandboxed/mcp-config.json`.
 40. **Browser enabled (Codex/OpenCode):** with `browser.enabled: true` and `--tool codex`, `PLAYWRIGHT_MCP_URL` is still passed but no `--mcp-config` arg is added.
 41. **Browser URL override:** with `browser.mcp_url` (or `SANDBOX_BROWSER_MCP_URL`) set, the injected `PLAYWRIGHT_MCP_URL` and the mcp-config `url` both use that value; the default is `http://127.0.0.1:8931/mcp`.
+42. **Browser unstarted hint:** with `browser.enabled: true` and a non-reachable endpoint, the launcher prints the `systemctl --user enable --now claude-sandboxed-playwright` hint to stderr. With a reachable endpoint (or browser disabled) it does not.
 
 ## Automated tests
 

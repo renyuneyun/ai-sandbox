@@ -499,6 +499,17 @@ else
     ok "warn: no override, no warning"
 fi
 
+# Browser hint: when the browser MCP endpoint is not reachable, the launcher
+# tells the user how to start the systemd unit.
+HINT_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$HINT_DIR")
+hint_out=$(SANDBOX_BROWSER_ENABLED=true SANDBOX_BROWSER_MCP_URL='http://127.0.0.1:59999/mcp' run_launcher_stderr "$HINT_DIR" "$SCRIPT_DIR/../..")
+if [[ "$hint_out" == *"systemctl --user enable --now claude-sandboxed-playwright"* ]]; then
+    ok "browser: unreachable endpoint emits systemd start hint"
+else
+    bad "browser: unreachable endpoint emits systemd start hint (got '$hint_out')"
+fi
+
 assert_rejected_before_docker() {
     local name="$1" expected_error="$2"
     shift 2

@@ -258,6 +258,7 @@ The endpoint is bound to `127.0.0.1` on the host. Because the container uses hos
 - For headless or remote (SSH/VNC) operation, edit the unit's `Environment` (e.g. uncomment `PLAYWRIGHT_MCP_HEADLESS=true` or change `DISPLAY`).
 - The browser is a real resource on the host: the agent is granted full control of pages it is given, so only enable it where you trust the agent's browser activity.
 - Requires `npx`/Node.js on the host (the service runs `@playwright/mcp`). The first browser launch pulls the Playwright browser into `~/.cache/ms-playwright`.
+- The launcher does a lightweight reachability check when `browser.enabled` is true: if the endpoint is not up, it prints the one-liner to start the unit (`systemctl --user enable --now claude-sandboxed-playwright`) to stderr so the user is never left guessing.
 
 ## Cleanup
 
