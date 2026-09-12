@@ -96,3 +96,28 @@ The wrapper at `/usr/local/bin/git` intercepts `git` invocations. Claude (or any
 - Custom git binary with built-in restrictions: requires building git from source, ongoing maintenance.
 
 Hard barriers are out of scope for the non-adversarial threat model. If the threat model changes (e.g. running untrusted Claude plugins), revisit.
+
+---
+
+## Browser automation: on-host remote MCP vs in-sandbox browser
+
+### On-host Playwright MCP server (chosen)
+
+A resident systemd user service runs `@playwright/mcp` on the host, bound to `127.0.0.1`, exposing HTTP at `/mcp`. The agent (inside the container) reaches it through `network_mode: host` and drives a browser that is created and shown on the host.
+
+**Why chosen:** The browser is user-visible and interactive by default, which is the main goal. There is no browser (or large Playwright browser cache) inside the container, so the sandbox's blast radius does not gain a networking surface beyond the MCP endpoint. The MCP server provides high-level agent-friendly tools (`browser_navigate`, `browser_click`, `browser_snapshot`) rather than raw CDP.
+
+**Trade-offs:**
+- The MCP port is reachable by any process in the container (host networking). Mitigations: bound to `127.0.0.1` only, and the agent already has the same trust boundary as the documented host proxy passthrough. Not an adversarial boundary.
+- The service is a resident process, though the expensive resource (the browser) is still launched only on demand. True socket activation was considered but rejected: `@playwright/mcp`'s HTTP transport must bind its own port, so a systemd socket would have to hand off the listening FD to a Node HTTP server, which the tool does not support cleanly.
+- Requires Node.js / `npx` on the host and a display for headed mode.
+
+### Playwright in the container (not chosen)
+Install `playwright`/`chromium` inside the container and run it headless or with a VNC.
+
+**Why not used:** A headless in-container browser is invisible to the user (defeating the main point), needs a sizeable cache in the `claude-agent-home` volume, and headless displays must still be mirrored back out. On-demand host browser is both simpler and more aligned with the goal of user visibility.
+
+### Raw CDP to a host Chrome (alternative)
+Launch Chrome on the host with `--remote-debugging-port` and connect from inside over CDP.
+
+**Why not used for the wire-up:** It works and is lighter, but CDP is a low-level protocol; the MCP server adds the accessibility-snapshot tooling agents actually use. CDP remains the fallback if `PLAYWRIGHT_MCP_URL` is used directly from a Playwright script.

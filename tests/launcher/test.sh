@@ -395,6 +395,53 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
   bad "integration: env var override reaches Docker ($CAPTURED_JOINED)"
 unset SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS
 
+# --- Browser (Playwright MCP) integration tests ---
+CAPTURE_DIR_BROWSER="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BROWSER")
+SANDBOX_BROWSER_ENABLED=true \
+SANDBOX_BROWSER_MCP_URL='http://127.0.0.1:8931/mcp' \
+run_captured_launcher "$CAPTURE_DIR_BROWSER" "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-e><PLAYWRIGHT_MCP_URL=http://127.0.0.1:8931/mcp>"* ]] &&
+  ok "browser: PLAYWRIGHT_MCP_URL reaches Docker" ||
+  bad "browser: PLAYWRIGHT_MCP_URL reaches Docker ($CAPTURED_JOINED)"
+[[ "$CAPTURED_JOINED" == *":/etc/claude-sandboxed/mcp-config.json:ro>"* ]] &&
+  ok "browser: mcp-config mounted read-only" ||
+  bad "browser: mcp-config mounted read-only ($CAPTURED_JOINED)"
+[[ "$CAPTURED_JOINED" == *"<--mcp-config></etc/claude-sandboxed/mcp-config.json>"* ]] &&
+  ok "browser: Claude gets --mcp-config" ||
+  bad "browser: Claude gets --mcp-config ($CAPTURED_JOINED)"
+
+CAPTURE_DIR_BROWSER_CODEX="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BROWSER_CODEX")
+SANDBOX_BROWSER_ENABLED=true \
+run_captured_launcher "$CAPTURE_DIR_BROWSER_CODEX" --tool codex "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-e><PLAYWRIGHT_MCP_URL=http://127.0.0.1:8931/mcp>"* ]] &&
+  ok "browser: PLAYWRIGHT_MCP_URL passed for codex too" ||
+  bad "browser: PLAYWRIGHT_MCP_URL passed for codex too ($CAPTURED_JOINED)"
+[[ "$CAPTURED_JOINED" != *"<--mcp-config>"* ]] &&
+  ok "browser: no --mcp-config for non-Claude tools" ||
+  bad "browser: no --mcp-config for non-Claude tools ($CAPTURED_JOINED)"
+
+CAPTURE_DIR_BROWSER_URL="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BROWSER_URL")
+SANDBOX_BROWSER_ENABLED=true \
+SANDBOX_BROWSER_MCP_URL='http://127.0.0.1:9999/mcp' \
+run_captured_launcher "$CAPTURE_DIR_BROWSER_URL" "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-e><PLAYWRIGHT_MCP_URL=http://127.0.0.1:9999/mcp>"* ]] &&
+  ok "browser: custom mcp_url honored" ||
+  bad "browser: custom mcp_url honored ($CAPTURED_JOINED)"
+
+CAPTURE_DIR_NOBROWSER="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_NOBROWSER")
+run_captured_launcher "$CAPTURE_DIR_NOBROWSER" "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" != *"<PLAYWRIGHT_MCP_URL"* && "$CAPTURED_JOINED" != *"<mcp-config>"* ]] &&
+  ok "browser: disabled by default, no injection" ||
+  bad "browser: disabled by default, no injection ($CAPTURED_JOINED)"
+
 # --- Conflicting config warning tests ---
 # Runs the launcher as a subprocess and captures stderr to check for the warning.
 run_launcher_stderr() {

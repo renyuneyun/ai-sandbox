@@ -70,6 +70,18 @@ proxy:
   # inside the container. Default: true.
   # env_passthrough: true
 
+browser:
+  # Let the sandboxed agent drive a browser that runs ON THE HOST and is
+  # visible/interactive for the user. The agent connects to a Playwright MCP
+  # server started by a systemd user service (see install-playwright-systemd);
+  # host networking makes it reachable at 127.0.0.1 from inside. When enabled,
+  # the launcher passes PLAYWRIGHT_MCP_URL and, for Claude, registers the MCP
+  # server automatically. The browser is only launched when the agent drives it.
+  # Default: false.
+  # enabled: true
+  # URL of the host-side Playwright MCP endpoint. Default: http://127.0.0.1:8931/mcp
+  # mcp_url: http://127.0.0.1:8931/mcp
+
 sandbox:
   # uid: 1000          # default: $(id -u)
   # gid: 1000          # default: $(id -g)

@@ -331,7 +331,6 @@ if [[ -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ]]; then
         printf '%s\n' "$SANDBOX_GIT_POLICY_BLOCK"
     } > "$POLICY_FILE"
     GIT_POLICY_VOLUME_ARGS+=(-v "$POLICY_FILE:/etc/claude-sandboxed/git-policy.conf:ro")
-    trap 'rm -f "$POLICY_FILE"' EXIT
 fi
 
 # Git local-override env var: passed into the container only when true.
@@ -346,6 +345,48 @@ if [[ "$SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS" == "true" && \
     echo "claude-sandboxed: git.allow_local_operations is enabled; git.policy.allow/block rules will be ignored." >&2
 fi
 
+# --- Host-side browser service (Playwright MCP) ---
+# When enabled, the sandboxed agent can drive a browser that runs ON THE HOST
+# (visible to the user) by connecting to a remote HTTP MCP server started by a
+# systemd user service (see install-playwright-systemd). Host networking makes
+# the host-bound endpoint reachable from inside at 127.0.0.1. The launcher hands
+# the agent the URL via PLAYWRIGHT_MCP_URL and, for Claude, registers the server
+# through a generated read-only --mcp-config file.
+# Launcher-side only: not exported, not interpolated by the compose file.
+SANDBOX_BROWSER_ENABLED="$(resolve SANDBOX_BROWSER_ENABLED .browser.enabled false)"
+SANDBOX_BROWSER_MCP_URL="$(resolve SANDBOX_BROWSER_MCP_URL .browser.mcp_url "http://127.0.0.1:8931/mcp")"
+
+BROWSER_ENV_ARGS=()
+BROWSER_VOLUME_ARGS=()
+MCP_CONFIG_FILE=""
+if [[ "$SANDBOX_BROWSER_ENABLED" == "true" ]]; then
+    BROWSER_ENV_ARGS+=(-e PLAYWRIGHT_MCP_URL="$SANDBOX_BROWSER_MCP_URL")
+    MCP_CONFIG_FILE="$(mktemp)"
+    cat > "$MCP_CONFIG_FILE" <<EOF
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "http",
+      "url": "$SANDBOX_BROWSER_MCP_URL",
+      "headers": {}
+    }
+  }
+}
+EOF
+    # Mounted read-only at a fixed path inside the container (the contract
+    # between the launcher and the agent config).
+    BROWSER_VOLUME_ARGS+=(-v "$MCP_CONFIG_FILE:/etc/claude-sandboxed/mcp-config.json:ro")
+    if [[ "$SELECTED_TOOL" == claude ]]; then
+        TOOL_DEFAULT_ARGS+=(--mcp-config /etc/claude-sandboxed/mcp-config.json)
+    fi
+fi
+
+# Single shared cleanup trap removes the generated git-policy and MCP config
+# files from /tmp on exit (each is only removed if it was actually created).
+if [[ -n "$POLICY_FILE" || -n "$MCP_CONFIG_FILE" ]]; then
+    trap 'rm -f -- "$POLICY_FILE" "$MCP_CONFIG_FILE"' EXIT
+fi
+
 # Run the selected coding agent in a one-shot container.
 # Each invocation gets its own container; named volumes (claude-agent-home) persist across runs.
 docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
@@ -358,6 +399,8 @@ docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml
   "${GIT_VOLUME_ARGS[@]}" \
   "${TOOL_VOLUME_ARGS[@]}" \
   "${GIT_POLICY_VOLUME_ARGS[@]}" \
+  "${BROWSER_ENV_ARGS[@]}" \
+  "${BROWSER_VOLUME_ARGS[@]}" \
   -it ai-agent \
   npx --yes "$TOOL_PACKAGE" "${TOOL_DEFAULT_ARGS[@]}" "${TOOL_USER_ARGS[@]}"
 

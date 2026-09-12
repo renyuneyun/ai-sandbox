@@ -56,6 +56,10 @@ opencode:
 proxy:
   env_passthrough: true         # bool,    default: true
 
+browser:
+  enabled: true                 # bool,    default: false - drive a visible host browser
+  mcp_url: http://127.0.0.1:8931/mcp  # string, default: http://127.0.0.1:8931/mcp
+
 sandbox:
   uid: 1000          # integer, default: $(id -u)
   gid: 1000          # integer, default: $(id -g)
@@ -213,6 +217,46 @@ proxy:
 ```
 
 The environment override is `SANDBOX_PROXY_ENV_PASSTHROUGH=false`. It follows the normal precedence: environment override > workspace config > user config > default. Proxy URLs are intentionally not accepted in YAML; keep them in the host environment.
+
+## Browser (automation of a visible host browser)
+
+By default the sandbox has no browser. When `browser.enabled: true`, the sandboxed agent can drive a browser that runs on the host (visible and interactive for the user) by connecting to a Playwright MCP server started by a systemd user service over host networking.
+
+```yaml
+browser:
+  enabled: true                 # drive a visible host browser; default: false
+  mcp_url: http://127.0.0.1:8931/mcp  # default: http://127.0.0.1:8931/mcp
+```
+
+The environment overrides are `SANDBOX_BROWSER_ENABLED` and `SANDBOX_BROWSER_MCP_URL`, following the normal precedence: environment override > workspace config > user config > default.
+
+### Setup
+
+The host-side service is created once (no per-session command):
+
+```sh
+/usr/local/share/claude-sandboxed/install-playwright-systemd
+```
+
+This installs `share/claude-sandboxed/systemd/claude-sandboxed-playwright.service` as a systemd **user** unit, enables it (auto-starts at login), and starts it. It only launches the browser when an agent drives it — the browser appears on the host display (headed by default).
+
+### What the launcher injects
+
+When `browser.enabled` is true, the launcher:
+
+- passes `PLAYWRIGHT_MCP_URL=$mcp_url` into the container (any agent or bit of code can use it to connect a Playwright client over CDP/HTTP);
+- generates a read-only MCP config file mounted at `/etc/claude-sandboxed/mcp-config.json`;
+- for **Claude** (the default tool), appends `--mcp-config /etc/claude-sandboxed/mcp-config.json`, registering the server as `playwright`. The agent can then call `browser_navigate`, `browser_click`, `browser_snapshot`, `browser_take_screenshot`, etc.
+- for **Codex / OpenCode**, the server is reachable at any configured MCP endpoint; read `PLAYWRIGHT_MCP_URL` or register the remote server yourself (Codex reads `~/.codex/config.toml`, OpenCode reads its `mcp` config).
+
+The endpoint is bound to `127.0.0.1` on the host. Because the container uses host networking, the agent reaches it directly at `http://127.0.0.1:8931/mcp` — same mechanism as the host proxy.
+
+### Notes
+
+- The service holds one browser instance; concurrent sandbox sessions share it. Use the MCP server's `--isolated` option if each session needs its own profile.
+- For headless or remote (SSH/VNC) operation, edit the unit's `Environment` (e.g. uncomment `PLAYWRIGHT_MCP_HEADLESS=true` or change `DISPLAY`).
+- The browser is a real resource on the host: the agent is granted full control of pages it is given, so only enable it where you trust the agent's browser activity.
+- Requires `npx`/Node.js on the host (the service runs `@playwright/mcp`). The first browser launch pulls the Playwright browser into `~/.cache/ms-playwright`.
 
 ## Cleanup
 

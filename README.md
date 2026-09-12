@@ -58,6 +58,23 @@ Set `CLAUDE_SANDBOXED_DIR` to override the directory containing `docker-compose.
 
 Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
 
+## Browser automation (on the host)
+
+The sandbox can drive a browser that runs on the host, so the user sees and can interact with it. This is a one-time, scripted setup followed by a config flag:
+
+```sh
+# 1. One-time: install + enable the host-side Playwright MCP service
+/usr/local/share/claude-sandboxed/install-playwright-systemd
+```
+
+```yaml
+# 2. Per-project or user config: opt in
+browser:
+  enabled: true
+```
+
+When enabled, the launcher passes `PLAYWRIGHT_MCP_URL` into the sandbox and (for Claude) registers the MCP server automatically, so the agent can call `browser_navigate`, `browser_click`, `browser_snapshot`, etc. The browser window appears on the host and is only launched when the agent first drives it. See [docs/configuration.md#browser](docs/configuration.md#browser) for details.
+
 ## Configuration
 
 Identity knobs can be set persistently via YAML config files instead of env vars. Two files are read, in priority order: `$WORKSPACE_DIR/.claude-sandboxed.yaml` (per-project) and `${XDG_CONFIG_HOME:-~/.config}/claude-sandboxed/config.yaml` (user defaults). Both are optional. Precedence per knob: env var > workspace config > user config > built-in default.
@@ -85,6 +102,7 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [x] **Claude config passthrough** - the entire `~/.claude` directory (credentials, skills, settings, etc.) and `ANTHROPIC_API_KEY` are forwarded automatically
     - [x] **Host identity mirroring** - Claude Code runs as your host user (same UID, GID, username, and home path), so file ownership is consistent
     - [x] **Host network access** - the container shares the host network, so host-local services are reachable from inside (e.g. a proxy at `127.0.0.1:1080`, or a network-based MCP server running on the host)
+    - [x] **On-host visible browser** - optional (`browser.enabled`) browser automation where the browser runs on the host (visible/interactive for the user) via a Playwright MCP server, driven from inside over host networking
     - [x] **Proxy environment passthrough** - standard uppercase and lowercase proxy variables are forwarded by default, with a global or per-workspace opt-out
     - [x] **Automatic cleanup** - the container is removed on exit
     - [ ] **Additional mountpoints** - Additional paths to mount into the container

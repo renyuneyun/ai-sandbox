@@ -1,0 +1,43 @@
+# systemd --user unit for the claude-sandboxed host-side Playwright MCP browser
+# service. It serves a remote HTTP MCP endpoint that sandboxed coding agents
+# reach through host networking (the container shares the host network), so the
+# browser runs ON THE HOST and is visible/interactive for the user.
+#
+# Install + enable (one time) after installation:
+#   /usr/local/share/claude-sandboxed/install-playwright-systemd
+#   # or, manually:
+#   mkdir -p ~/.config/systemd/user
+#   cp .../systemd/claude-sandboxed-playwright.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now claude-sandboxed-playwright
+#
+# The server stays resident but only LAUNCHES the browser when an agent calls a
+# browser_* tool (headed by default). Adjust DISPLAY / add --headless below for
+# headless or remote (VNC/X-forwarding) operation.
+
+[Unit]
+Description=Playwright MCP browser server for claude-sandboxed agent sandbox
+Documentation=https://github.com/renyuneyuny/claude-sandboxed
+After=network.target
+
+[Service]
+Type=simple
+# --port enables the standalone HTTP transport; endpoint is /mcp.
+ExecStart=npx --yes @playwright/mcp@latest --host 127.0.0.1 --port 8931
+Restart=on-failure
+RestartSec=3
+# node/npx may be installed outside the login-shell PATH (e.g. ~/.nvm).
+# Adjust PATH here or override ExecStart if npx is not resolved.
+Environment=PATH=%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=%h
+Environment=PLAYWRIGHT_BROWSERS_PATH=%h/.cache/ms-playwright
+# Show the browser on the host display so the user can see/interact with it.
+# For headless or remote operation, uncomment the line below and/or change
+# DISPLAY (e.g. to a VNC/EGL display).
+# Environment=PLAYWRIGHT_MCP_HEADLESS=true
+Environment=DISPLAY=:0
+# One browser instance is allowed; concurrent sandbox sessions share it.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

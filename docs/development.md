@@ -17,14 +17,15 @@ These must not be broken without updating all affected documentation:
 - `WORKSPACE_DIR` must be exported before `docker compose up` — the compose file interpolates it.
 - `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_USERNAME`, and `SANDBOX_HOME` must be exported before `docker compose up` — the compose file interpolates them for volume paths and the user-creation entrypoint.
 - `SANDBOX_GIT_IDENTITY_NAME`, `SANDBOX_GIT_IDENTITY_EMAIL`, and `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to build `-e` and `-v` flags for `docker compose run`. Do not add them to the "must be exported" list above.
-- `SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*` profile knobs, `SANDBOX_PROXY_ENV_PASSTHROUGH`, `SANDBOX_CLEANUP`, `SANDBOX_GIT_POLICY_ALLOW`, `SANDBOX_GIT_POLICY_BLOCK`, and `SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to choose/configure a profile and build `-e` and `-v` flags for `docker compose run`. `GIT_MODE_ENV_ARGS` follows the same conditional-fill pattern as `GIT_ENV_ARGS` and `PROXY_ENV_ARGS` (only populated when the knob is `true`).
+- `SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*` profile knobs, `SANDBOX_PROXY_ENV_PASSTHROUGH`, `SANDBOX_CLEANUP`, `SANDBOX_GIT_POLICY_ALLOW`, `SANDBOX_GIT_POLICY_BLOCK`, `SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS`, `SANDBOX_BROWSER_ENABLED`, and `SANDBOX_BROWSER_MCP_URL` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to choose/configure a profile and build `-e` and `-v` flags for `docker compose run`. `GIT_MODE_ENV_ARGS` follows the same conditional-fill pattern as `GIT_ENV_ARGS` and `PROXY_ENV_ARGS` (only populated when the knob is `true`).
 - Selected-profile config mounts are in the launcher (`TOOL_VOLUME_ARGS`), not in `docker-compose.yml`. `TOOL_VOLUME_ARGS` replaces the former `CLAUDE_VOLUME_ARGS`; the compose file must not mount tool config paths.
 - Tool API keys are forwarded dynamically through `TOOL_ENV_ARGS` only when present. Do not add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` as static Compose environment entries.
 - Proxy variables are forwarded through generic `PROXY_ENV_ARGS`, not through a tool profile or static Compose entries. When enabled, collect only non-empty `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase equivalents; preserve each name and value exactly. `configure_proxy_env` must remain outside the main guard for source-level tests.
 - `GIT_VOLUME_ARGS` remains the conditional read-only host git-config mounts. `GIT_POLICY_VOLUME_ARGS` remains the optional one-invocation generated policy bind.
 - The `GIT_POLICY_FILE` path (`/etc/claude-sandboxed/git-policy.conf`) is the contract between the launcher and the wrapper. Changing it requires updating both.
+- The browser MCP config path (`/etc/claude-sandboxed/mcp-config.json`) is the contract between the launcher and the Claude `--mcp-config`; it is generated only when `SANDBOX_BROWSER_ENABLED=true`. Changing it requires updating the launcher and this doc.
 - `resolve_list`, `parse_launcher_args`, `resolve_tool`, `detect_host_version`, and `configure_tool` must remain defined outside the main guard (for testability), same as `check_config` and `resolve`.
-- The policy file cleanup trap (`trap 'rm -f "$POLICY_FILE"' EXIT`) must remain. Without it, temp policy files leak in `/tmp`.
+- The generated-file cleanup trap (`trap 'rm -f -- "$POLICY_FILE" "$MCP_CONFIG_FILE"' EXIT`, installed only when at least one generated file exists) must remain. Without it, temp git-policy and MCP-config files leak in `/tmp`.
 - `WORKSPACE_DIR` must be resolved to an absolute path before `WORKSPACE_CONFIG` is derived from it (the workspace config path is `$WORKSPACE_DIR/.claude-sandboxed.yaml`).
 - Config file functions (`check_config`, `resolve`) must remain defined outside the main execution guard so tests can source the launcher and call them directly.
 - All `docker compose` invocations must pass `-p "$COMPOSE_PROJECT"` (set to `claude-sandboxed-${SANDBOX_UID}`) — this namespaces containers and volumes per user, preventing conflicts on multi-user machines.
@@ -33,12 +34,12 @@ These must not be broken without updating all affected documentation:
 
 ## Config resolution
 
-Identity, git, proxy, cleanup, policy, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
+Identity, git, proxy, cleanup, policy, browser, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
 
 1. **Env var** (`SANDBOX_UID`, etc.) - if set and non-empty.
 2. **Workspace config** (`$WORKSPACE_DIR/.claude-sandboxed.yaml`) - if the key is present and non-null.
 3. **User config** (`${XDG_CONFIG_HOME:-$HOME/.config}/claude-sandboxed/config.yaml`) - if the key is present and non-null.
-4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty.
+4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty. `SANDBOX_BROWSER_ENABLED`: `false`. `SANDBOX_BROWSER_MCP_URL`: `http://127.0.0.1:8931/mcp`.
 
 Two bash functions in `bin/claude-sandboxed` implement this:
 
@@ -103,6 +104,10 @@ Priority order (first match wins), implemented in `bin/claude-sandboxed`:
 35. **OpenCode host login:** `claude-sandboxed --tool opencode` uses host `~/.config/opencode` and `~/.local/share/opencode` (auth + sessions) and the `--auto` autonomy flag.
 36. **OpenCode API-key isolation:** with both passthroughs disabled and `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) set, OpenCode starts without mounting host config or data.
 37. **OpenCode custom paths:** with `opencode.config_dir` / `opencode.data_dir` pointing at custom host paths, the container mounts them at `${SANDBOX_HOME}/.config/opencode` / `${SANDBOX_HOME}/.local/share/opencode`.
+38. **Browser disabled (default):** with no browser config, the container has no `PLAYWRIGHT_MCP_URL` env, no `/etc/claude-sandboxed/mcp-config.json` mount, and Claude gets no `--mcp-config` arg.
+39. **Browser enabled (Claude):** with `browser.enabled: true`, `PLAYWRIGHT_MCP_URL` is passed, the mcp-config is mounted read-only, and Claude's Docker args include `--mcp-config /etc/claude-sandboxed/mcp-config.json`.
+40. **Browser enabled (Codex/OpenCode):** with `browser.enabled: true` and `--tool codex`, `PLAYWRIGHT_MCP_URL` is still passed but no `--mcp-config` arg is added.
+41. **Browser URL override:** with `browser.mcp_url` (or `SANDBOX_BROWSER_MCP_URL`) set, the injected `PLAYWRIGHT_MCP_URL` and the mcp-config `url` both use that value; the default is `http://127.0.0.1:8931/mcp`.
 
 ## Automated tests
 
