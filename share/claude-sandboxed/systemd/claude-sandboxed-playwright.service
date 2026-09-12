@@ -4,10 +4,8 @@
 # browser runs ON THE HOST and is visible/interactive for the user.
 #
 # Install + enable (one time) after installation:
-#   /usr/local/share/claude-sandboxed/install-playwright-systemd
-#   # or, manually:
-#   mkdir -p ~/.config/systemd/user
-#   cp .../systemd/claude-sandboxed-playwright.service ~/.config/systemd/user/
+#   # installed by the package manager to /usr/lib/systemd/user, or by install.sh
+#   # to ~/.local/share/systemd/user (already on the systemd user search path).
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now claude-sandboxed-playwright
 #

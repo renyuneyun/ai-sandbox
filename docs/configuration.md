@@ -232,13 +232,14 @@ The environment overrides are `SANDBOX_BROWSER_ENABLED` and `SANDBOX_BROWSER_MCP
 
 ### Setup
 
-The host-side service is created once (no per-session command):
+The unit is installed by the package manager (into `/usr/lib/systemd/user`) or by `install.sh` (into `${XDG_DATA_HOME:-~/.local/share}/systemd/user`, already on the systemd user search path). Enabling it is the normal one-liner:
 
 ```sh
-/usr/local/share/claude-sandboxed/install-playwright-systemd
+systemctl --user daemon-reload
+systemctl --user enable --now claude-sandboxed-playwright
 ```
 
-This installs `share/claude-sandboxed/systemd/claude-sandboxed-playwright.service` as a systemd **user** unit, enables it (auto-starts at login), and starts it. It only launches the browser when an agent drives it — the browser appears on the host display (headed by default).
+This auto-starts it at login. It only launches the browser when an agent drives it — the browser appears on the host display (headed by default).
 
 ### What the launcher injects
 

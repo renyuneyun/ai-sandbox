@@ -63,8 +63,10 @@ Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected
 The sandbox can drive a browser that runs on the host, so the user sees and can interact with it. This is a one-time, scripted setup followed by a config flag:
 
 ```sh
-# 1. One-time: install + enable the host-side Playwright MCP service
-/usr/local/share/claude-sandboxed/install-playwright-systemd
+# 1. One-time: enable the host-side Playwright MCP service (installed with the
+#    package, into /usr/lib/systemd/user or ~/.local/share/systemd/user)
+systemctl --user daemon-reload
+systemctl --user enable --now claude-sandboxed-playwright
 ```
 
 ```yaml

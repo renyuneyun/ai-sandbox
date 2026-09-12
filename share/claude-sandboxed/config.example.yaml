@@ -73,7 +73,7 @@ proxy:
 browser:
   # Let the sandboxed agent drive a browser that runs ON THE HOST and is
   # visible/interactive for the user. The agent connects to a Playwright MCP
-  # server started by a systemd user service (see install-playwright-systemd);
+  # server started by a systemd user service (`claude-sandboxed-playwright`);
   # host networking makes it reachable at 127.0.0.1 from inside. When enabled,
   # the launcher passes PLAYWRIGHT_MCP_URL and, for Claude, registers the MCP
   # server automatically. The browser is only launched when the agent drives it.
