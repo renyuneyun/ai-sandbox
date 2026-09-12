@@ -17,4 +17,6 @@ package() {
     install -Dm644 "$_repodir/share/claude-sandboxed/docker-compose.yml" "$pkgdir/usr/share/claude-sandboxed/docker-compose.yml"
     install -Dm755 "$_repodir/share/claude-sandboxed/git-wrapper" "$pkgdir/usr/share/claude-sandboxed/git-wrapper"
     install -Dm644 "$_repodir/share/claude-sandboxed/config.example.yaml" "$pkgdir/usr/share/claude-sandboxed/config.example.yaml"
+    install -Dm755 "$_repodir/share/claude-sandboxed/install-playwright-systemd" "$pkgdir/usr/share/claude-sandboxed/install-playwright-systemd"
+    install -Dm644 "$_repodir/share/claude-sandboxed/systemd/claude-sandboxed-playwright.service" "$pkgdir/usr/share/claude-sandboxed/systemd/claude-sandboxed-playwright.service"
 }
