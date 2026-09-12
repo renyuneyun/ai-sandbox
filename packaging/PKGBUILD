@@ -1,6 +1,6 @@
 # Maintainer: renyuneyun (Rui Zhao) <email@ryey.icu>
 pkgname=claude-sandboxed
-pkgver=0.4.0
+pkgver=0.5.0
 pkgrel=1
 pkgdesc="Sandboxed Claude Code environment using Docker, with git push protection"
 arch=('any')
