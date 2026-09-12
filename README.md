@@ -99,7 +99,10 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [x] **Isolated environment and cache** - packages and global tools install into a persistent container volume, never touching the host
     - [x] **Git operation policy** - a wrapper script blocks destructive git operations (push, reset, rebase, clean, commit --amend, branch -D, tag -f, etc.) and history-bypass plumbing (commit-tree, update-ref, replace, fast-import, prune, symbolic-ref) while allowing non-destructive and appending-only operations (commit, add, status, log, fetch, merge, branch -d, tag -d, etc.)
     - [x] **Git config inheritance** - the host user's `~/.gitconfig` and `~/.config/git/` are bind-mounted read-only so Claude commits with the host user's identity
-    - [x] **Sandbox information** - The runtime can detect that it is in the sandbox via `IS_SANDBOX=1`
+    - [x] **Sandbox information** - The runtime can detect that it is in the sandbox
+        - [x] Option 1: via `IS_SANDBOX=1`
+        - [ ] Option 2: via system prompt
+        - [ ] Option 3: via skill (which exposes multiple information, including some additional hints for sandbox-host interaction)
 - [x] **Transparent isolation** - the sandbox boundary is invisible to Claude Code: it sees the same user identity, credentials, paths, and Claude settings as on the host, while the rest of the system stays out of reach
     - [x] **Claude config passthrough** - the entire `~/.claude` directory (credentials, skills, settings, etc.) and `ANTHROPIC_API_KEY` are forwarded automatically
     - [x] **Host identity mirroring** - Claude Code runs as your host user (same UID, GID, username, and home path), so file ownership is consistent
@@ -133,6 +136,15 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [x] **Codex version** - pin Codex CLI via `CODEX_VERSION` or `codex.version`
     - [x] **OpenCode version** - pin OpenCode via `OPENCODE_VERSION` or `opencode.version`
     - [ ] Additional built-in coding agents
+- [ ] **Rename**: Rename the tool, together with some shorthands or common potential misunderstanding names
+    - Naming options:
+        - Option 1:
+            - Full name: agent-sandboxed, agent-sandbox, ai-sandboxed, ai-sandbox
+            - Short name: asb, asdb, or asd
+        - Option 2:
+            - Full name: sandboxed-agent, sandboxed-ai
+            - Short name: sba, sbda, sba
+    - Shorthands: TOOL_NAME-opencode, TOOL_NAME-claude, TOOL_NAME-codex
 - [ ] **More runtimes** - support other runtimes than Docker
 
 ## Testing
