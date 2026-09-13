@@ -297,6 +297,135 @@ configure_extra_mounts() {
   return 0
 }
 
+# Canonicalize an existing path's parent directory (resolves symlinks and ".."
+# via `pwd -P`), then append the final component. Portable: does not rely on
+# `readlink -f` (absent on macOS). Existence of the final component is not
+# required.
+canonicalize() {
+  local p="$1" dir
+  dir="$(cd "$(dirname "$p")" 2>/dev/null && pwd -P)" || { echo "$p"; return 0; }
+  printf '%s/%s' "$dir" "$(basename "$p")"
+}
+
+# Add a host:container[:flags] mount to the auto-detect pool unless the
+# container path was already mounted by an earlier auto detector (dedup).
+# Extra mounts are appended before auto mounts, so they win on overlap.
+_auto_add_mount() {
+  local host="$1" cont="$2" flags="$3" m
+  for m in "${AUTO_MOUNTED_CONTS[@]:-}"; do
+    if [[ "$m" == "$cont" ]]; then
+      return 0
+    fi
+  done
+  AUTO_MOUNTED_CONTS+=("$cont")
+  local spec="$host:$cont"
+  if [[ -n "$flags" ]]; then
+    spec="$spec:$flags"
+  fi
+  EXTRA_MOUNT_VOLUME_ARGS+=(-v "$spec")
+}
+
+# Git worktree / submodule auto-detect. A linked worktree (or submodule) has
+# `.git` as a FILE containing "gitdir: <path>" that points at the common git
+# dir, normally inside the main worktree / superproject and therefore OUTSIDE
+# the workspace mount. Mount that common git dir read-write (git writes commits
+# into its object store) so git behaves in the sandbox exactly as on the host.
+detect_git_worktree_mount() {
+  local gitfile="$WORKSPACE_DIR/.git"
+  [[ -f "$gitfile" ]] || return 0
+  local line target=""
+  while IFS= read -r line; do
+    case "$line" in
+      gitdir:*) target="${line#gitdir:}" ;;
+    esac
+  done < "$gitfile"
+  [[ -n "$target" ]] || return 0
+  target="${target#"${target%%[![:space:]]*}"}"
+  [[ "$target" == /* ]] || target="$WORKSPACE_DIR/$target"
+  target="$(canonicalize "$target")"
+  [[ -d "$target" ]] || return 0
+  _auto_add_mount "$target" "$target" ""
+  return 0
+}
+
+# Skill/config symlink auto-detect. A bind mount of a config dir keeps any
+# symlink it contains as an unresolved symlink inside the container, so a skill
+# shared from elsewhere (~/code/myskill ∉ ~/.claude) would be a dangling link.
+# Mount the canonical real target read-only (at its own path) when it lies
+# outside every mounted config root, so the symlink resolves as on the host.
+detect_symlink_mounts() {
+  local root link target t
+  for root in "${AUTO_SYMLINK_ROOTS[@]:-}"; do
+    [[ -d "$root" ]] || continue
+    while IFS= read -r -d '' link; do
+      target="$(readlink "$link")" || continue
+      if [[ "$target" == /* ]]; then
+        t="$target"
+      else
+        t="$(dirname "$link")/$target"
+      fi
+      t="$(canonicalize "$t")"
+      [[ -e "$t" ]] || continue
+      local inside=0 other
+      for other in "${AUTO_SYMLINK_ROOTS[@]:-}"; do
+        case "$t" in
+          "$other"|"$other"/*) inside=1; break ;;
+        esac
+      done
+      if [[ "$inside" -eq 1 ]]; then
+        continue
+      fi
+      _auto_add_mount "$t" "$t" "ro"
+    done < <(find "$root" -type l -print0 2>/dev/null)
+  done
+  return 0
+}
+
+# Populate AUTO_SYMLINK_ROOTS from the selected tool's mounted config dirs.
+# Only roots whose passthrough is enabled are scanned (a disabled, unmounted
+# config dir is irrelevant).
+_init_symlink_roots() {
+  AUTO_SYMLINK_ROOTS=()
+  case "${SELECTED_TOOL:-}" in
+    claude)
+      if [[ "$CLAUDE_CONFIG_PASSTHROUGH" == "true" && -d "$CLAUDE_CONFIG_DIR" ]]; then
+        AUTO_SYMLINK_ROOTS+=("$CLAUDE_CONFIG_DIR")
+      fi
+      ;;
+    codex)
+      if [[ "$CODEX_CONFIG_PASSTHROUGH" == "true" && -d "$CODEX_CONFIG_DIR" ]]; then
+        AUTO_SYMLINK_ROOTS+=("$CODEX_CONFIG_DIR")
+      fi
+      ;;
+    opencode)
+      if [[ "$OPENCODE_CONFIG_PASSTHROUGH" == "true" && -d "$OPENCODE_CONFIG_DIR" ]]; then
+        AUTO_SYMLINK_ROOTS+=("$OPENCODE_CONFIG_DIR")
+      fi
+      if [[ "$OPENCODE_DATA_PASSTHROUGH" == "true" && -d "$OPENCODE_DATA_DIR" ]]; then
+        AUTO_SYMLINK_ROOTS+=("$OPENCODE_DATA_DIR")
+      fi
+      ;;
+  esac
+}
+
+# Run every enabled auto-detector, each appending any discovered mounts to
+# EXTRA_MOUNT_VOLUME_ARGS. Only triggers when the situation actually exists
+# (a linked worktree / an out-of-tree symlink), so results mirror the host.
+configure_auto_mounts() {
+  AUTO_MOUNTED_CONTS=()
+  AUTO_SYMLINK_ROOTS=()
+  [[ "$SANDBOX_EXTRA_MOUNTS_ENABLED" == "true" ]] || return 0  # global mounts.enabled
+
+  if [[ "$SANDBOX_AUTO_GIT_WORKTREE" == "true" ]]; then
+    detect_git_worktree_mount
+  fi
+  if [[ "$SANDBOX_AUTO_SYMLINKS" == "true" ]]; then
+    _init_symlink_roots
+    detect_symlink_mounts
+  fi
+  return 0
+}
+
 # --- Main execution (only runs when executed, not sourced) ---
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -358,11 +487,18 @@ SANDBOX_PROXY_ENV_PASSTHROUGH="$(resolve SANDBOX_PROXY_ENV_PASSTHROUGH .proxy.en
 configure_proxy_env
 
 # Extra passthrough mounts: arbitrary host paths mounted into the sandbox on top
-# of the well-known tool-config dirs (e.g. CC Switch's own settings directory).
-# Launcher-side only; not interpolated by the compose file (built as -v flags).
+# of the well-known tool-config dirs (e.g. CC Switch's own settings directory),
+# plus auto-detected mounts (git worktree / submodule common git dir, config
+# symlinks that point outside the mounted roots). All launcher-side only; not
+# interpolated by the compose file (built as -v flags).
+# mounts.enabled / SANDBOX_EXTRA_MOUNTS_ENABLED is the master switch for the
+# whole mounts feature (both the manual extra list and auto-detection).
 SANDBOX_EXTRA_MOUNTS="$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)"
 SANDBOX_EXTRA_MOUNTS_ENABLED="$(resolve SANDBOX_EXTRA_MOUNTS_ENABLED .mounts.enabled true)"
+SANDBOX_AUTO_GIT_WORKTREE="$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)"
+SANDBOX_AUTO_SYMLINKS="$(resolve SANDBOX_AUTO_SYMLINKS .mounts.auto.symlinks true)"
 configure_extra_mounts
+configure_auto_mounts
 
 # Git identity and host-config passthrough.
 # Not exported: these are consumed only by this launcher to build -e / -v flags

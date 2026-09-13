@@ -607,7 +607,7 @@ fi
 
 # --- resolve_list tests for mounts.extra ---
 
-printf 'mounts:\n  enabled: false\n  extra:\n    - "~/.config/cc-switch"\n    - "/tmp/x:/opt/x:rw"\n' > "$TMPDIR/mounts-workspace.yaml"
+printf 'mounts:\n  enabled: false\n  extra:\n    - "~/.config/cc-switch"\n    - "/tmp/x:/opt/x:rw"\n  auto:\n    git_worktree: false\n    symlinks: false\n' > "$TMPDIR/mounts-workspace.yaml"
 
 # Test: resolve_list - mounts.extra from workspace
 unset SANDBOX_EXTRA_MOUNTS
@@ -664,6 +664,53 @@ if [[ "$result" == "false" ]]; then
 else
     bad "resolve: mounts.enabled workspace false (got '$result')"
 fi
+
+# Test: resolve - mounts.auto defaults to true
+unset SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS
+WORKSPACE_CONFIG="$TMPDIR/nonexistent.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=false
+result=$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)
+if [[ "$result" == "true" ]]; then
+    ok "resolve: mounts.auto.git_worktree default true"
+else
+    bad "resolve: mounts.auto.git_worktree default (got '$result')"
+fi
+result=$(resolve SANDBOX_AUTO_SYMLINKS .mounts.auto.symlinks true)
+if [[ "$result" == "true" ]]; then
+    ok "resolve: mounts.auto.symlinks default true"
+else
+    bad "resolve: mounts.auto.symlinks default (got '$result')"
+fi
+
+# Test: resolve - mounts.auto workspace values win (no env)
+WORKSPACE_CONFIG="$TMPDIR/mounts-workspace.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=true
+USER_CONFIG_VALID=false
+result=$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)
+if [[ "$result" == "false" ]]; then
+    ok "resolve: mounts.auto.git_worktree workspace false wins"
+else
+    bad "resolve: mounts.auto.git_worktree workspace false (got '$result')"
+fi
+result=$(resolve SANDBOX_AUTO_SYMLINKS .mounts.auto.symlinks true)
+if [[ "$result" == "false" ]]; then
+    ok "resolve: mounts.auto.symlinks workspace false wins"
+else
+    bad "resolve: mounts.auto.symlinks workspace false (got '$result')"
+fi
+
+# Test: resolve - env var beats workspace for auto keys
+SANDBOX_AUTO_GIT_WORKTREE=true
+result=$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)
+if [[ "$result" == "true" ]]; then
+    ok "resolve: mounts.auto.git_worktree env beats workspace"
+else
+    bad "resolve: mounts.auto.git_worktree env (got '$result')"
+fi
+unset SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS
 
 # --- resolve tests for claude.config_dir and claude.config_file ---
 

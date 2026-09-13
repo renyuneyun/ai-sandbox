@@ -471,6 +471,118 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
   ok "extra: mount reaches docker compose run" ||
   bad "extra: mount reaches docker compose run ($CAPTURED_JOINED)"
 
+# --- Auto-detect mount tests (git worktree / symlinks) ---
+reset_auto_mounts() {
+    SANDBOX_EXTRA_MOUNTS_ENABLED=true
+    SANDBOX_AUTO_GIT_WORKTREE=true
+    SANDBOX_AUTO_SYMLINKS=true
+    AUTO_MOUNTED_CONTS=()
+    AUTO_SYMLINK_ROOTS=()
+    EXTRA_MOUNT_VOLUME_ARGS=()
+}
+
+# git worktree: .git is a file pointing at an outside common git dir -> mounted rw
+AUTO_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_DIR")
+COMMON_GIT="$AUTO_DIR/common-git"
+mkdir -p "$COMMON_GIT"
+WORKSPACE_DIR="$AUTO_DIR/linked-wt"
+mkdir -p "$WORKSPACE_DIR"
+printf 'gitdir: %s\n' "$COMMON_GIT" > "$WORKSPACE_DIR/.git"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto git: common git dir mounted" "-v" "${EXTRA_MOUNT_VOLUME_ARGS[0]}"
+assert_eq "auto git: common git dir rw (no :ro suffix)" "$COMMON_GIT:$COMMON_GIT" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# git: .git is a real directory (main worktree) -> nothing to mount
+AUTO_DIR_MAIN="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_DIR_MAIN")
+WORKSPACE_DIR="$AUTO_DIR_MAIN/main-wt"
+mkdir -p "$WORKSPACE_DIR/.git"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto git: plain .git dir mounts nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# git: relative gitdir path resolved against the worktree
+AUTO_DIR_REL="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_DIR_REL")
+mkdir -p "$AUTO_DIR_REL/.git/worktrees/foo" "$AUTO_DIR_REL/main"
+printf 'gitdir: ../.git/worktrees/foo\n' > "$AUTO_DIR_REL/main/.git"
+WORKSPACE_DIR="$AUTO_DIR_REL/main"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto git: relative gitdir resolved" "$AUTO_DIR_REL/.git/worktrees/foo:$AUTO_DIR_REL/.git/worktrees/foo" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# git: absent target dir (broken gitdir) -> no mount, no crash
+AUTO_DIR_BROKEN="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_DIR_BROKEN")
+WORKSPACE_DIR="$AUTO_DIR_BROKEN/wt"
+mkdir -p "$WORKSPACE_DIR"
+printf 'gitdir: /definitely/not/here\n' > "$WORKSPACE_DIR/.git"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto git: broken gitdir mounts nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# symlink: a skill symlink pointing outside the config root is mounted ro at its realpath
+AUTO_SYM="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_SYM")
+CLAUDE_CONFIG_DIR="$AUTO_SYM/.claude"
+mkdir -p "$CLAUDE_CONFIG_DIR/skills"
+SKILL_REAL="$AUTO_SYM/skills-real"
+mkdir -p "$SKILL_REAL"
+ln -s "$SKILL_REAL" "$CLAUDE_CONFIG_DIR/skills/my-skill"
+SELECTED_TOOL=claude
+CLAUDE_CONFIG_PASSTHROUGH=true
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto symlink: external target mounted ro" "$SKILL_REAL:$SKILL_REAL:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# symlink: target already inside a mounted root -> skipped
+ln -s "$AUTO_SYM/.claude/skills" "$CLAUDE_CONFIG_DIR/internal"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto symlink: internal target skipped (only external ro)" "2" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# symlink: relative target resolved against the link's directory
+AUTO_SYM_REL="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_SYM_REL")
+CLAUDE_CONFIG_DIR="$AUTO_SYM_REL/.claude"
+mkdir -p "$CLAUDE_CONFIG_DIR/skills"
+mkdir -p "$AUTO_SYM_REL/shared-lib"
+ln -s "$AUTO_SYM_REL/shared-lib" "$CLAUDE_CONFIG_DIR/skills/lib"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto symlink: relative target resolved" "$AUTO_SYM_REL/shared-lib:$AUTO_SYM_REL/shared-lib:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# symlink: unmounted config root (passthrough off) is not scanned
+reset_auto_mounts
+CLAUDE_CONFIG_PASSTHROUGH=false
+configure_auto_mounts
+assert_eq "auto symlink: passthrough off scans nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# auto disabled entirely via global switch
+AUTO_OFF_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_OFF_DIR")
+WORKSPACE_DIR="$AUTO_OFF_DIR/wt"
+mkdir -p "$WORKSPACE_DIR" "$AUTO_OFF_DIR/git"
+printf 'gitdir: %s\n' "$AUTO_OFF_DIR/git" > "$WORKSPACE_DIR/.git"
+reset_auto_mounts
+SANDBOX_EXTRA_MOUNTS_ENABLED=false
+configure_auto_mounts
+assert_eq "auto: global mounted.enabled=false disables all" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+unset SELECTED_TOOL CLAUDE_CONFIG_DIR CLAUDE_CONFIG_PASSTHROUGH SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS SANDBOX_EXTRA_MOUNTS_ENABLED
+
+# Auto-detected mounts reach docker compose run (default tool = claude)
+AUTO_INT="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_INT")
+mkdir -p "$AUTO_INT/common-git" "$AUTO_INT/wt"
+printf 'gitdir: %s\n' "$AUTO_INT/common-git" > "$AUTO_INT/wt/.git"
+run_captured_launcher "$AUTO_INT/int" "$AUTO_INT/wt"
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-v><$AUTO_INT/common-git:$AUTO_INT/common-git>"* ]] &&
+  ok "auto integration: worktree common git dir reaches docker" ||
+  bad "auto integration: worktree common git dir reaches docker ($CAPTURED_JOINED)"
+
 # --- Browser (Playwright MCP) integration tests ---
 CAPTURE_DIR_BROWSER="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BROWSER")

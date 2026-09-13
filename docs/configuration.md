@@ -57,10 +57,13 @@ proxy:
   env_passthrough: true         # bool,    default: true
 
 mounts:
-  enabled: true                 # bool,    default: true - set false to ignore all extra mounts
+  enabled: true                 # bool,    default: true - master switch for all extra/auto mounts
   extra:                        # list of strings HOST[:CONTAINER[:FLAGS]], default: empty
     - "~/.config/cc-switch"
     - "~/.cache/npm:/home/user/.cache/npm:rw"
+  auto:
+    git_worktree: true          # bool,    default: true - mount a linked worktree/submodule common git dir
+    symlinks: true              # bool,    default: true - mount config symlink targets that point outside
 
 browser:
   enabled: true                 # bool,    default: false - drive a visible host browser
@@ -251,7 +254,23 @@ SANDBOX_EXTRA_MOUNTS=$'~/.config/cc-switch\n~/.cache/npm:/home/user/.cache/npm:r
 **Notes:**
 - Extra mounts are read-only by default. This differs from the tool-config passthroughs (`.claude`, `.codex`, ...), which mount read/write by default — those are trusted, well-known paths, whereas extra mounts are arbitrary and opt-in.
 - The host path must already exist; Docker does not create empty stub dirs for bind mounts passed via `-v` to `docker compose run`, so a missing host path makes the invocation fail loudly rather than silently creating a host directory.
-- Extra mount specs are appended very late in the `docker compose run` argument list, so they mounted in addition to, and cannot accidentally replace, the tool/git/browser mounts.
+- Extra mount specs are appended very late in the `docker compose run` argument list, so they are mounted in addition to, and cannot accidentally replace, the tool/git/browser mounts.
+
+## Automatic mount detection
+
+Beyond the explicit `mounts.extra` list, the launcher can **auto-detect** paths the selected agent needs and mount them too. These only trigger when the situation actually exists, so the result mirrors how the agent would run on the host. Both detectors default to `true` and only fire when their precondition holds.
+
+```yaml
+mounts:
+  auto:
+    git_worktree: true   # default true
+    symlinks: true       # default true
+```
+
+- **`git_worktree`** — When the workspace is a *linked git worktree* or a *git submodule*, its `.git` is a file containing `gitdir: <path>` pointing at the common git dir, normally inside the main worktree / superproject and therefore **outside** the workspace mount. The launcher mounts that common git dir read-write at the same path, so git keeps working (commits write into its object store) exactly as on the host. In a normal main-worktree checkout `.git` is already inside the workspace, so nothing is mounted.
+- **`symlinks`** — A bind mount of a config dir keeps any symlink it contains as an *unresolved* symlink inside the container, so a skill shared from elsewhere (`~/code/myskill` not under `~/.claude`) would be a dangling link. The launcher scans the selected tool's mounted config dir(s) (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode` — only those whose passthrough is enabled) for symlinks whose canonical target lies outside those roots, and mounts each such target read-only at its own path so the symlink resolves as on the host.
+
+Environment overrides follow normal precedence: `SANDBOX_AUTO_GIT_WORKTREE` and `SANDBOX_AUTO_SYMLINKS`. The master `mounts.enabled` / `SANDBOX_EXTRA_MOUNTS_ENABLED` switch disables **all** extra and auto mounts.
 
 ## Browser (automation of a visible host browser)
 

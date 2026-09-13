@@ -86,12 +86,26 @@ mounts:
   #   - A leading "~" / "~/" in either path expands to the host $HOME.
   #
   # Env override: SANDBOX_EXTRA_MOUNTS (newline-separated specs).
-  # When enabled: false, all extra mounts are ignored. Default: true.
+  # When enabled: false, ALL mounts (manual extra + auto-detected) are ignored.
+  # Default: true.
   # enabled: true
   # extra:
   #   - "~/.config/cc-switch"                                 # read-only, same path
   #   - "~/.cache/npm:/home/user/.cache/npm:rw"               # explicit dest + rw
   #   - "/shared/creds:/opt/creds:ro"
+  #
+  # Automatic mount detection (only triggers when the situation exists):
+  #   git_worktree: when the workspace is a linked git worktree or submodule,
+  #     mount the common git dir (its ".git" file's gitdir target) read-write
+  #     so git behaves as on the host. Default: true.
+  #   symlinks: within the selected tool's mounted config dir, mount read-only
+  #     the canonical target of any symlink that resolves OUTSIDE those dirs,
+  #     so e.g. a skill shared from elsewhere is usable instead of dangling.
+  #     Default: true.
+  # Env overrides: SANDBOX_AUTO_GIT_WORKTREE, SANDBOX_AUTO_SYMLINKS.
+  # auto:
+  #   git_worktree: true
+  #   symlinks: true
 
 browser:
   # Let the sandboxed agent drive a browser that runs ON THE HOST and is
