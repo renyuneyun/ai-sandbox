@@ -17,6 +17,12 @@ _repodir="$(realpath ..)"
 
 package() {
     install -Dm755 "$_repodir/bin/ai-sandbox" "$pkgdir/usr/bin/ai-sandbox"
+    # Short alias and per-tool entrypoints: symlinks; the launcher auto-detects
+    # the chosen tool from the invoked name (asb-claude / asb-codex / asb-opencode).
+    ln -s ai-sandbox "$pkgdir/usr/bin/asb"
+    ln -s ai-sandbox "$pkgdir/usr/bin/asb-claude"
+    ln -s ai-sandbox "$pkgdir/usr/bin/asb-codex"
+    ln -s ai-sandbox "$pkgdir/usr/bin/asb-opencode"
     install -Dm644 "$_repodir/share/ai-sandbox/docker-compose.yml" "$pkgdir/usr/share/ai-sandbox/docker-compose.yml"
     install -Dm755 "$_repodir/share/ai-sandbox/git-wrapper" "$pkgdir/usr/share/ai-sandbox/git-wrapper"
     install -Dm644 "$_repodir/share/ai-sandbox/config.example.yaml" "$pkgdir/usr/share/ai-sandbox/config.example.yaml"
