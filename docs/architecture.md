@@ -38,6 +38,7 @@ A selected agent does not get a browser inside the container. Instead, browser a
 | Git-config bind | Host user | Host files persist; read-only in container |
 | Generated policy bind | One launcher invocation | Temporary host file removed by exit trap; read-only |
 | Git-wrapper bind | Package installation | Persists with installation; read-only |
+| Extra/auto passthrough bind | Host paths from `mounts.extra` / `mounts.auto` | Host files persist; read-only by default (manual `:rw` opts in; auto git-worktree is read-write) |
 
 The tool-config bind targets `${SANDBOX_HOME}/.claude` and `${SANDBOX_HOME}/.claude.json` for Claude, or `${SANDBOX_HOME}/.codex` for Codex. Each can be disabled independently. Bind mounts follow their host files' lifecycle; unlike them, the Docker-managed named volume outlives each ephemeral container.
 

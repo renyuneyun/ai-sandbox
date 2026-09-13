@@ -249,7 +249,7 @@ The environment override is `SANDBOX_EXTRA_MOUNTS` (newline-separated specs, sam
 SANDBOX_EXTRA_MOUNTS=$'~/.config/cc-switch\n~/.cache/npm:/home/user/.cache/npm:rw' ai-sandbox
 ```
 
-`mounts.enabled: false` (or `SANDBOX_EXTRA_MOUNTS_ENABLED=false`) ignores all extra mounts.
+`mounts.enabled: false` (or `SANDBOX_EXTRA_MOUNTS_ENABLED=false`) is the master switch: it ignores **all** extra and auto mounts.
 
 **Notes:**
 - Extra mounts are read-only by default. This differs from the tool-config passthroughs (`.claude`, `.codex`, ...), which mount read/write by default — those are trusted, well-known paths, whereas extra mounts are arbitrary and opt-in.
