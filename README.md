@@ -111,8 +111,8 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [x] **On-host visible browser** - optional (`browser.enabled`) browser automation where the browser runs on the host (visible/interactive for the user) via a Playwright MCP server, driven from inside over host networking
     - [x] **Proxy environment passthrough** - standard uppercase and lowercase proxy variables are forwarded by default, with a global or per-workspace opt-out
     - [x] **Automatic cleanup** - the container is removed on exit
-    - [ ] **Additional mountpoints** - Additional paths to mount into the container
-        - [ ] Mechanism with manual switches
+    - [x] **Additional mountpoints** - Additional paths to mount into the container (`mounts.extra`; read-only by default, e.g. CC Switch's own settings directory)
+        - [x] Mechanism with manual switches
         - [ ] Automatic-sensing / Intelligent-sensing by trying to predict what might be needed (e.g. git worktree)
     - [ ] **Safe passthrough** - safely passthrough files and folders between host and sandbox, such as package caches
 - [x] **Parallel sessions** - each invocation runs as an independent one-shot container, so multiple sandboxed sessions can run concurrently
@@ -130,7 +130,7 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [x] **Claude version** - pin Claude Code version via `claude.version`
     - [x] **Claude config passthrough** - toggle `~/.claude` mount via `claude.config_passthrough`
     - [x] **Cleanup** - toggle cleanup container via `sandbox.cleanup`
-    - [ ] Additional paths
+    - [x] **Additional paths** - mount arbitrary host paths via `mounts.extra`
 - [x] **Alternative Claude config and env** - use dedicated Claude config paths, disable config passthrough, or authenticate with `ANTHROPIC_API_KEY`
 - [ ] **Network isolation** - container has its own network, isolated from the host
 - [x] **More tools** - first-class Claude Code, Codex CLI, and OpenCode profiles

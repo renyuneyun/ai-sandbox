@@ -17,14 +17,14 @@ These must not be broken without updating all affected documentation:
 - `WORKSPACE_DIR` must be exported before `docker compose up` — the compose file interpolates it.
 - `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_USERNAME`, and `SANDBOX_HOME` must be exported before `docker compose up` — the compose file interpolates them for volume paths and the user-creation entrypoint.
 - `SANDBOX_GIT_IDENTITY_NAME`, `SANDBOX_GIT_IDENTITY_EMAIL`, and `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to build `-e` and `-v` flags for `docker compose run`. Do not add them to the "must be exported" list above.
-- `SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*` profile knobs, `SANDBOX_PROXY_ENV_PASSTHROUGH`, `SANDBOX_CLEANUP`, `SANDBOX_GIT_POLICY_ALLOW`, `SANDBOX_GIT_POLICY_BLOCK`, `SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS`, `SANDBOX_BROWSER_ENABLED`, and `SANDBOX_BROWSER_MCP_URL` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to choose/configure a profile and build `-e` and `-v` flags for `docker compose run`. `GIT_MODE_ENV_ARGS` follows the same conditional-fill pattern as `GIT_ENV_ARGS` and `PROXY_ENV_ARGS` (only populated when the knob is `true`).
+- `SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*` profile knobs, `SANDBOX_PROXY_ENV_PASSTHROUGH`, `SANDBOX_CLEANUP`, `SANDBOX_GIT_POLICY_ALLOW`, `SANDBOX_GIT_POLICY_BLOCK`, `SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS`, `SANDBOX_BROWSER_ENABLED`, `SANDBOX_BROWSER_MCP_URL`, `SANDBOX_EXTRA_MOUNTS`, and `SANDBOX_EXTRA_MOUNTS_ENABLED` are launcher-side only — they are NOT exported and NOT interpolated by the compose file. The launcher reads them to choose/configure a profile and build `-e` and `-v` flags for `docker compose run`. `GIT_MODE_ENV_ARGS` follows the same conditional-fill pattern as `GIT_ENV_ARGS` and `PROXY_ENV_ARGS` (only populated when the knob is `true`).
 - Selected-profile config mounts are in the launcher (`TOOL_VOLUME_ARGS`), not in `docker-compose.yml`. `TOOL_VOLUME_ARGS` replaces the former `CLAUDE_VOLUME_ARGS`; the compose file must not mount tool config paths.
 - Tool API keys are forwarded dynamically through `TOOL_ENV_ARGS` only when present. Do not add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` as static Compose environment entries.
 - Proxy variables are forwarded through generic `PROXY_ENV_ARGS`, not through a tool profile or static Compose entries. When enabled, collect only non-empty `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase equivalents; preserve each name and value exactly. `configure_proxy_env` must remain outside the main guard for source-level tests.
 - `GIT_VOLUME_ARGS` remains the conditional read-only host git-config mounts. `GIT_POLICY_VOLUME_ARGS` remains the optional one-invocation generated policy bind.
 - The `GIT_POLICY_FILE` path (`/etc/ai-sandbox/git-policy.conf`) is the contract between the launcher and the wrapper. Changing it requires updating both.
 - The browser MCP config path (`/etc/ai-sandbox/mcp-config.json`) is the contract between the launcher and the Claude `--mcp-config`; it is generated only when `SANDBOX_BROWSER_ENABLED=true`. Changing it requires updating the launcher and this doc.
-- `resolve_list`, `parse_launcher_args`, `resolve_tool`, `detect_host_version`, and `configure_tool` must remain defined outside the main guard (for testability), same as `check_config` and `resolve`.
+- `resolve_list`, `parse_launcher_args`, `resolve_tool`, `detect_host_version`, `configure_tool`, `configure_proxy_env`, `configure_extra_mounts`, and `expand_home` must remain defined outside the main guard (for testability), same as `check_config` and `resolve`.
 - The generated-file cleanup trap (`trap 'rm -f -- "$POLICY_FILE" "$MCP_CONFIG_FILE"' EXIT`, installed only when at least one generated file exists) must remain. Without it, temp git-policy and MCP-config files leak in `/tmp`.
 - `WORKSPACE_DIR` must be resolved to an absolute path before `WORKSPACE_CONFIG` is derived from it (the workspace config path is `$WORKSPACE_DIR/.ai-sandbox.yaml`).
 - Config file functions (`check_config`, `resolve`) must remain defined outside the main execution guard so tests can source the launcher and call them directly.
@@ -34,18 +34,18 @@ These must not be broken without updating all affected documentation:
 
 ## Config resolution
 
-Identity, git, proxy, cleanup, policy, browser, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
+Identity, git, proxy, cleanup, policy, browser, mounts, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
 
 1. **Env var** (`SANDBOX_UID`, etc.) - if set and non-empty.
 2. **Workspace config** (`$WORKSPACE_DIR/.ai-sandbox.yaml`) - if the key is present and non-null.
 3. **User config** (`${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandbox/config.yaml`) - if the key is present and non-null.
-4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty. `SANDBOX_BROWSER_ENABLED`: `false`. `SANDBOX_BROWSER_MCP_URL`: `http://127.0.0.1:8931/mcp`.
+4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty. `SANDBOX_BROWSER_ENABLED`: `false`. `SANDBOX_BROWSER_MCP_URL`: `http://127.0.0.1:8931/mcp`. `SANDBOX_EXTRA_MOUNTS`: empty. `SANDBOX_EXTRA_MOUNTS_ENABLED`: `true`.
 
 Two bash functions in `bin/ai-sandbox` implement this:
 
 - `check_config FILE` - returns 0 if the file exists, `yq` is on `PATH`, and the YAML parses; returns 1 (with a stderr warning) otherwise. Missing files return 1 silently.
 - `resolve ENV_NAME YQ_PATH DEFAULT` - checks the env var, then the validated workspace config, then the validated user config, then the default. Consults `WORKSPACE_CONFIG_VALID` / `USER_CONFIG_VALID` flags set by up-front `check_config` calls.
-- `resolve_list ENV_NAME YQ_PATH` - like `resolve` but for YAML arrays. Returns newline-joined values. Used for `git.policy.allow` and `git.policy.block`. No default parameter (empty if nothing set).
+- `resolve_list ENV_NAME YQ_PATH` - like `resolve` but for YAML arrays. Returns newline-joined values. Used for `git.policy.allow`, `git.policy.block`, and `mounts.extra`. No default parameter (empty if nothing set).
 
 `yq` is a host-only dependency. Either mikefarah's Go `yq` or kislyuk's Python `yq` works - the spec uses only `yq '.' file` (validation) and `yq -r '.path' file` (key lookup), which are common-denominator operations.
 
@@ -109,6 +109,9 @@ Priority order (first match wins), implemented in `bin/ai-sandbox`:
 40. **Browser enabled (Codex/OpenCode):** with `browser.enabled: true` and `--tool codex`, `PLAYWRIGHT_MCP_URL` is still passed but no `--mcp-config` arg is added.
 41. **Browser URL override:** with `browser.mcp_url` (or `SANDBOX_BROWSER_MCP_URL`) set, the injected `PLAYWRIGHT_MCP_URL` and the mcp-config `url` both use that value; the default is `http://127.0.0.1:8931/mcp`.
 42. **Browser unstarted hint:** with `browser.enabled: true` and a non-reachable endpoint, the launcher prints the `systemctl --user enable --now ai-sandbox-playwright` hint to stderr. With a reachable endpoint (or browser disabled) it does not.
+43. **Extra mount host-only:** with `mounts.extra: ["~/.some-dir"]` pointing at an existing host dir, the dir appears read-only at the same path inside the container (host `/home/<user>/.some-dir` → container `${SANDBOX_HOME}/.some-dir:ro`). Verify with `ls` and attempt a write (should fail).
+44. **Extra mount explicit path and rw:** with `mounts.extra: ["/tmp/x:/opt/x:rw"]`, the container sees `/opt/x` read-write (write succeeds in the sandbox and is visible on the host).
+45. **Extra mount disabled:** with `mounts.extra` set and `mounts.enabled: false`, no extra `-v` args reach `docker compose run`.
 
 ## Automated tests
 

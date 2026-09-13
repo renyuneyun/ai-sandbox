@@ -234,6 +234,69 @@ configure_proxy_env() {
   return 0
 }
 
+# Expand a leading "~" or "~/" in a path to $HOME (the host home). Leaves
+# absolute and relative paths unchanged. Paths referencing other users
+# ("~user") are not expanded.
+expand_home() {
+  local p="$1"
+  case "$p" in
+    "~") printf '%s' "$HOME" ;;
+    "~/"*) printf '%s/%s' "$HOME" "${p#\~/}" ;;
+    *) printf '%s' "$p" ;;
+  esac
+}
+
+# Build Docker volume arguments for user-defined extra passthrough mounts.
+# Each line of $SANDBOX_EXTRA_MOUNTS is a spec: HOST[:CONTAINER[:FLAGS]].
+#   - CONTAINER defaults to the expanded HOST path (handy when the sandbox home
+#     mirrors the host home, e.g. CC Switch's own directory).
+#   - FLAGS defaults to "ro" (read-only safety default); use ":rw" to opt in.
+#   - A leading "~" / "~/" in either path expands to the host $HOME.
+# Mounts are skipped with a warning when a path is empty after expansion.
+configure_extra_mounts() {
+  EXTRA_MOUNT_VOLUME_ARGS=()
+  [[ "$SANDBOX_EXTRA_MOUNTS_ENABLED" == "true" ]] || return 0
+
+  local spec
+  while IFS= read -r spec; do
+    spec="${spec#"${spec%%[![:space:]]*}"}"
+    spec="${spec%"${spec##*[![:space:]]}"}"
+    [[ -n "$spec" ]] || continue
+
+    local host cont flags rest
+    if [[ "$spec" != *:* ]]; then
+      host="$spec"; cont="$spec"; flags="ro"
+    else
+      host="${spec%%:*}"
+      rest="${spec#*:}"
+      if [[ "$rest" != *:* ]]; then
+        # Single token after host: "ro"/"rw" is a flag (container == host);
+        # anything else is an explicit container path.
+        if [[ "$rest" == "ro" || "$rest" == "rw" ]]; then
+          cont="$host"; flags="$rest"
+        else
+          cont="$rest"; flags="ro"
+        fi
+      else
+        cont="${rest%%:*}"; flags="${rest#*:}"
+      fi
+    fi
+
+    host="$(expand_home "$host")"
+    cont="$(expand_home "$cont")"
+    if [[ -z "$host" || -z "$cont" ]]; then
+      echo "ai-sandbox: skipping invalid extra mount spec '$spec'" >&2
+      continue
+    fi
+
+    flags="$(echo "$flags" | tr -d '[:space:]')"
+    local vol_arg="$host:$cont"
+    [[ -n "$flags" ]] && vol_arg="$vol_arg:$flags"
+    EXTRA_MOUNT_VOLUME_ARGS+=(-v "$vol_arg")
+  done <<< "$SANDBOX_EXTRA_MOUNTS"
+  return 0
+}
+
 # --- Main execution (only runs when executed, not sourced) ---
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -293,6 +356,13 @@ configure_tool "$SELECTED_TOOL"
 # Proxy environment passthrough applies to npx and every tool profile.
 SANDBOX_PROXY_ENV_PASSTHROUGH="$(resolve SANDBOX_PROXY_ENV_PASSTHROUGH .proxy.env_passthrough true)"
 configure_proxy_env
+
+# Extra passthrough mounts: arbitrary host paths mounted into the sandbox on top
+# of the well-known tool-config dirs (e.g. CC Switch's own settings directory).
+# Launcher-side only; not interpolated by the compose file (built as -v flags).
+SANDBOX_EXTRA_MOUNTS="$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)"
+SANDBOX_EXTRA_MOUNTS_ENABLED="$(resolve SANDBOX_EXTRA_MOUNTS_ENABLED .mounts.enabled true)"
+configure_extra_mounts
 
 # Git identity and host-config passthrough.
 # Not exported: these are consumed only by this launcher to build -e / -v flags
@@ -444,6 +514,7 @@ docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml
   "${GIT_POLICY_VOLUME_ARGS[@]}" \
   "${BROWSER_ENV_ARGS[@]}" \
   "${BROWSER_VOLUME_ARGS[@]}" \
+  "${EXTRA_MOUNT_VOLUME_ARGS[@]}" \
   -it ai-agent \
   npx --yes "$TOOL_PACKAGE" "${TOOL_DEFAULT_ARGS[@]}" "${TOOL_USER_ARGS[@]}"
 

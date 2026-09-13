@@ -56,6 +56,12 @@ opencode:
 proxy:
   env_passthrough: true         # bool,    default: true
 
+mounts:
+  enabled: true                 # bool,    default: true - set false to ignore all extra mounts
+  extra:                        # list of strings HOST[:CONTAINER[:FLAGS]], default: empty
+    - "~/.config/cc-switch"
+    - "~/.cache/npm:/home/user/.cache/npm:rw"
+
 browser:
   enabled: true                 # bool,    default: false - drive a visible host browser
   mcp_url: http://127.0.0.1:8931/mcp  # string, default: http://127.0.0.1:8931/mcp
@@ -217,6 +223,35 @@ proxy:
 ```
 
 The environment override is `SANDBOX_PROXY_ENV_PASSTHROUGH=false`. It follows the normal precedence: environment override > workspace config > user config > default. Proxy URLs are intentionally not accepted in YAML; keep them in the host environment.
+
+## Additional mount passthrough
+
+Beyond the well-known tool config directories (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode`), you can mount arbitrary host paths into the sandbox. This is useful for helper tools that keep their own state elsewhere and that the agent must see within its home — for example **CC Switch**, which stores its settings and switched profiles in its own directory (`~/.config/cc-switch`), profile picked by a symlinked `~/.claude.json`:
+
+```yaml
+mounts:
+  extra:
+    - "~/.config/cc-switch"
+```
+
+Each entry is a spec `HOST[:CONTAINER[:FLAGS]]`:
+
+- **`HOST`** — the host path to mount. A leading `~` / `~/` expands to the host `$HOME`.
+- **`CONTAINER`** *(optional)* — where the path appears inside the sandbox. Defaults to the expanded `HOST` path. Because the sandbox home mirrors the host home by default, omitting it mounts CC Switch's dir at the same logical place inside the container. Set it explicitly to mount elsewhere.
+- **`FLAGS`** *(optional)* — `ro` or `rw`. Defaults to `ro` (read-only safety default); use `:rw` to let the agent write through the mount.
+
+The environment override is `SANDBOX_EXTRA_MOUNTS` (newline-separated specs, same format), following the normal precedence. Example from the shell:
+
+```sh
+SANDBOX_EXTRA_MOUNTS=$'~/.config/cc-switch\n~/.cache/npm:/home/user/.cache/npm:rw' ai-sandbox
+```
+
+`mounts.enabled: false` (or `SANDBOX_EXTRA_MOUNTS_ENABLED=false`) ignores all extra mounts.
+
+**Notes:**
+- Extra mounts are read-only by default. This differs from the tool-config passthroughs (`.claude`, `.codex`, ...), which mount read/write by default — those are trusted, well-known paths, whereas extra mounts are arbitrary and opt-in.
+- The host path must already exist; Docker does not create empty stub dirs for bind mounts passed via `-v` to `docker compose run`, so a missing host path makes the invocation fail loudly rather than silently creating a host directory.
+- Extra mount specs are appended very late in the `docker compose run` argument list, so they mounted in addition to, and cannot accidentally replace, the tool/git/browser mounts.
 
 ## Browser (automation of a visible host browser)
 

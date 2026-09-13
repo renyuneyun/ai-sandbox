@@ -70,6 +70,29 @@ proxy:
   # inside the container. Default: true.
   # env_passthrough: true
 
+mounts:
+  # Extra passthrough mounts: arbitrary host paths mounted into the sandbox in
+  # addition to the well-known tool config dirs (~/.claude, ~/.codex, ...).
+  # Useful when a helper tool keeps its own config elsewhere and the agent must
+  # see it - for example CC Switch's settings directory so a switched Claude
+  # profile resolves its configs inside the sandbox.
+  #
+  # Each entry is a spec: HOST[:CONTAINER[:FLAGS]]
+  #   - CONTAINER defaults to the (same) expanded HOST path, which lines up
+  #     when the sandbox home mirrors the host home (the default). Set it
+  #     explicitly to mount somewhere else.
+  #   - FLAGS defaults to "ro" (read-only safety default); use ":rw" to allow
+  #     writes from inside the sandbox.
+  #   - A leading "~" / "~/" in either path expands to the host $HOME.
+  #
+  # Env override: SANDBOX_EXTRA_MOUNTS (newline-separated specs).
+  # When enabled: false, all extra mounts are ignored. Default: true.
+  # enabled: true
+  # extra:
+  #   - "~/.config/cc-switch"                                 # read-only, same path
+  #   - "~/.cache/npm:/home/user/.cache/npm:rw"               # explicit dest + rw
+  #   - "/shared/creds:/opt/creds:ro"
+
 browser:
   # Let the sandboxed agent drive a browser that runs ON THE HOST and is
   # visible/interactive for the user. The agent connects to a Playwright MCP

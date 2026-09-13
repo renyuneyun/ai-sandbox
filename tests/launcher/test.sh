@@ -395,6 +395,82 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
   bad "integration: env var override reaches Docker ($CAPTURED_JOINED)"
 unset SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS
 
+# --- Extra mount (configure_extra_mounts) tests ---
+reset_extra_mounts() {
+    SANDBOX_EXTRA_MOUNTS=""
+    SANDBOX_EXTRA_MOUNTS_ENABLED=true
+}
+
+# No mounts configured -> no volume args
+reset_extra_mounts
+configure_extra_mounts
+assert_eq "extra: empty list emits nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# Disabled -> no volume args even when mounts are set
+reset_extra_mounts
+SANDBOX_EXTRA_MOUNTS="~/.config/cc-switch"
+SANDBOX_EXTRA_MOUNTS_ENABLED=false
+configure_extra_mounts
+assert_eq "extra: disabled emits nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# Host-only spec: same path, ~ expanded, default read-only
+reset_extra_mounts
+HOME="/host/alice"
+SANDBOX_EXTRA_MOUNTS="~/.config/cc-switch"
+configure_extra_mounts
+assert_eq "extra: host-only spec" "-v" "${EXTRA_MOUNT_VOLUME_ARGS[0]}"
+assert_eq "extra: host-only destination" "/host/alice/.config/cc-switch:/host/alice/.config/cc-switch:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# Absolute host-only spec, no expansion, default ro
+reset_extra_mounts
+SANDBOX_EXTRA_MOUNTS="/opt/shared"
+configure_extra_mounts
+assert_eq "extra: absolute host-only" "-v" "${EXTRA_MOUNT_VOLUME_ARGS[0]}"
+assert_eq "extra: absolute host-only dest" "/opt/shared:/opt/shared:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# Explicit container destination + rw flag
+reset_extra_mounts
+HOME="/host/alice"
+SANDBOX_EXTRA_MOUNTS="~/.cache/npm:/home/user/.cache/npm:rw"
+configure_extra_mounts
+assert_eq "extra: explicit dest rw" "/host/alice/.cache/npm:/home/user/.cache/npm:rw" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# Multiple specs on separate lines
+reset_extra_mounts
+HOME="/host/alice"
+printf '~/.config/cc-switch\n~/.cache/npm:/home/user/.cache/npm:rw\n' > "$PROFILE_TMP/mounts.txt"
+SANDBOX_EXTRA_MOUNTS="$(cat "$PROFILE_TMP/mounts.txt")"
+configure_extra_mounts
+assert_eq "extra: two specs produce two -v pairs" "4" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+assert_eq "extra: first spec" "/host/alice/.config/cc-switch:/host/alice/.config/cc-switch:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "extra: second spec" "/host/alice/.cache/npm:/home/user/.cache/npm:rw" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
+
+# Lines with surrounding whitespace are trimmed; blank lines ignored
+reset_extra_mounts
+HOME="/host/alice"
+SANDBOX_EXTRA_MOUNTS=$'  ~/.config/cc-switch  \n   \n~/.cache/npm:ro'
+configure_extra_mounts
+assert_eq "extra: whitespace trimmed count" "4" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+assert_eq "extra: whitespace trimmed first" "/host/alice/.config/cc-switch:/host/alice/.config/cc-switch:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "extra: whitespace trimmed third" "/host/alice/.cache/npm:/host/alice/.cache/npm:ro" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
+
+# A single trailing-token "host:ro" is treated as a flag, container == host
+assert_eq "extra: host:flag keeps same path" "/host/alice/.cache/npm:/host/alice/.cache/npm:ro" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
+
+reset_extra_mounts
+unset HOME
+
+# --- Extra mount integration: specs reach docker compose run ---
+# run_captured_launcher sets HOME=$capture_dir/home, so "~" expands there.
+CAPTURE_DIR_EXTRA="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_EXTRA")
+SANDBOX_EXTRA_MOUNTS="~/.config/cc-switch:/home/tester/.config/cc-switch:ro" \
+run_captured_launcher "$CAPTURE_DIR_EXTRA" "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-v><$CAPTURE_DIR_EXTRA/home/.config/cc-switch:/home/tester/.config/cc-switch:ro>"* ]] &&
+  ok "extra: mount reaches docker compose run" ||
+  bad "extra: mount reaches docker compose run ($CAPTURED_JOINED)"
+
 # --- Browser (Playwright MCP) integration tests ---
 CAPTURE_DIR_BROWSER="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BROWSER")

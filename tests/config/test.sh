@@ -605,6 +605,66 @@ else
     bad "resolve_list: block list from workspace (got '$result')"
 fi
 
+# --- resolve_list tests for mounts.extra ---
+
+printf 'mounts:\n  enabled: false\n  extra:\n    - "~/.config/cc-switch"\n    - "/tmp/x:/opt/x:rw"\n' > "$TMPDIR/mounts-workspace.yaml"
+
+# Test: resolve_list - mounts.extra from workspace
+unset SANDBOX_EXTRA_MOUNTS
+WORKSPACE_CONFIG="$TMPDIR/mounts-workspace.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=true
+USER_CONFIG_VALID=false
+result=$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)
+if [[ "$result" == $'~/.config/cc-switch\n/tmp/x:/opt/x:rw' ]]; then
+    ok "resolve_list: mounts.extra workspace list"
+else
+    bad "resolve_list: mounts.extra workspace list (got '$result')"
+fi
+
+# Test: resolve_list - mounts.extra env var wins
+SANDBOX_EXTRA_MOUNTS=$'~/.cache/npm:/home/user/.cache/npm:rw'
+result=$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)
+if [[ "$result" == $'~/.cache/npm:/home/user/.cache/npm:rw' ]]; then
+    ok "resolve_list: mounts.extra env var wins"
+else
+    bad "resolve_list: mounts.extra env var wins (got '$result')"
+fi
+unset SANDBOX_EXTRA_MOUNTS
+
+# Test: resolve_list - mounts.extra empty when nothing set
+WORKSPACE_CONFIG="$TMPDIR/nonexistent.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=false
+result=$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)
+if [[ -z "$result" ]]; then
+    ok "resolve_list: mounts.extra empty when nothing set"
+else
+    bad "resolve_list: mounts.extra empty when nothing set (got '$result')"
+fi
+
+# Test: resolve - mounts.enabled default true
+unset SANDBOX_EXTRA_MOUNTS_ENABLED
+result=$(resolve SANDBOX_EXTRA_MOUNTS_ENABLED .mounts.enabled true)
+if [[ "$result" == "true" ]]; then
+    ok "resolve: mounts.enabled default true"
+else
+    bad "resolve: mounts.enabled default (got '$result')"
+fi
+
+# Test: resolve - mounts.enabled workspace false wins
+WORKSPACE_CONFIG="$TMPDIR/mounts-workspace.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=true
+USER_CONFIG_VALID=false
+result=$(resolve SANDBOX_EXTRA_MOUNTS_ENABLED .mounts.enabled true)
+if [[ "$result" == "false" ]]; then
+    ok "resolve: mounts.enabled workspace false wins"
+else
+    bad "resolve: mounts.enabled workspace false (got '$result')"
+fi
+
 # --- resolve tests for claude.config_dir and claude.config_file ---
 
 printf 'claude:\n  config_dir: /custom/ws-claude\n  config_file: /custom/ws-claude.json\n' > "$TMPDIR/cd-workspace.yaml"
