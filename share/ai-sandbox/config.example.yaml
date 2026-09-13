@@ -114,6 +114,12 @@ browser:
   # host networking makes it reachable at 127.0.0.1 from inside. When enabled,
   # the launcher passes PLAYWRIGHT_MCP_URL and, for Claude, registers the MCP
   # server automatically. The browser is only launched when the agent drives it.
+  #
+  # The host-side service prefers a system browser (chromium/chrome, then
+  # firefox), validating it headlessly at startup; if none is usable it falls
+  # back to Playwright's own bundled chromium, auto-installing it on first need.
+  # It also auto-detects the display (Wayland vs X11), so no DISPLAY wrangling
+  # is needed. Set PLAYWRIGHT_MCP_HEADLESS=true in the systemd unit for headless.
   # Default: false.
   # enabled: true
   # URL of the host-side Playwright MCP endpoint. Default: http://127.0.0.1:8931/mcp

@@ -308,10 +308,12 @@ The endpoint is bound to `127.0.0.1` on the host. Because the container uses hos
 
 ### Notes
 
+- **Browser selection & version safety:** the host-side launcher (`share/ai-sandbox/playwright-mcp`) prefers a *system* browser (chromium/chrome first, firefox as fallback) so your real profile/logins can be driven. Each system candidate is validated at startup with a short, disposable headless launch using the installed Playwright; a build that Playwright would reject (missing or version-mismatched) is skipped rather than failing on the first agent call. If no system browser validates, the service falls back to **Playwright's own bundled chromium, auto-installed on first need** (via the bundled `playwright` so the build matches the `playwright-mcp` release exactly). No download happens if a valid system browser is present.
+- **Display auto-detection (Wayland/X11):** instead of a hardcoded `DISPLAY=:0`, the launcher detects the session. It prefers Wayland when a `WAYLAND_DISPLAY` (or `$XDG_RUNTIME_DIR/wayland-0`) socket exists, passing the relevant env and `--ozone-platform=wayland` to chromium-family browsers; otherwise it uses `$DISPLAY` (defaulting to `:0`). Override by setting `DISPLAY` / `WAYLAND_DISPLAY` (or `XDG_RUNTIME_DIR`) explicitly in the unit. `PLAYWRIGHT_MCP_HEADLESS=true` forces `--headless` and skips display setup.
 - The service holds one browser instance; concurrent sandbox sessions share it. Use the MCP server's `--isolated` option if each session needs its own profile.
-- For headless or remote (SSH/VNC) operation, edit the unit's `Environment` (e.g. uncomment `PLAYWRIGHT_MCP_HEADLESS=true` or change `DISPLAY`).
+- For headless or remote (SSH/VNC) operation, edit the unit's `Environment` (e.g. set `PLAYWRIGHT_MCP_HEADLESS=true` or force `DISPLAY`).
 - The browser is a real resource on the host: the agent is granted full control of pages it is given, so only enable it where you trust the agent's browser activity.
-- Requires `npx`/Node.js on the host (the service runs `@playwright/mcp`). The first browser launch pulls the Playwright browser into `~/.cache/ms-playwright`.
+- Requires the `playwright-mcp` package (AUR) and `node`; a usable host browser (chromium/chrome preferred, firefox fallback) is preferred but not strictly required (Playwright's own chromium is auto-installed as a fallback). The launcher never downloads a Playwright browser build when a valid system browser is present. See the launcher source for details.
 - The launcher does a lightweight reachability check when `browser.enabled` is true: if the endpoint is not up, it prints the one-liner to start the unit (`systemctl --user enable --now ai-sandbox-playwright`) to stderr so the user is never left guessing.
 
 ## Cleanup

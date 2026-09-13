@@ -103,14 +103,14 @@ Hard barriers are out of scope for the non-adversarial threat model. If the thre
 
 ### On-host Playwright MCP server (chosen)
 
-A resident systemd user service runs `@playwright/mcp` on the host, bound to `127.0.0.1`, exposing HTTP at `/mcp`. The agent (inside the container) reaches it through `network_mode: host` and drives a browser that is created and shown on the host.
+A resident systemd user service runs the `playwright-mcp` package on the host, bound to `127.0.0.1`, exposing HTTP at `/mcp`. The agent (inside the container) reaches it through `network_mode: host` and drives a browser that is created and shown on the host.
 
 **Why chosen:** The browser is user-visible and interactive by default, which is the main goal. There is no browser (or large Playwright browser cache) inside the container, so the sandbox's blast radius does not gain a networking surface beyond the MCP endpoint. The MCP server provides high-level agent-friendly tools (`browser_navigate`, `browser_click`, `browser_snapshot`) rather than raw CDP.
 
 **Trade-offs:**
 - The MCP port is reachable by any process in the container (host networking). Mitigations: bound to `127.0.0.1` only, and the agent already has the same trust boundary as the documented host proxy passthrough. Not an adversarial boundary.
-- The service is a resident process, though the expensive resource (the browser) is still launched only on demand. True socket activation was considered but rejected: `@playwright/mcp`'s HTTP transport must bind its own port, so a systemd socket would have to hand off the listening FD to a Node HTTP server, which the tool does not support cleanly.
-- Requires Node.js / `npx` on the host and a display for headed mode.
+- The service is a resident process, though the expensive resource (the browser) is still launched only on demand. True socket activation was considered but rejected: `playwright-mcp`'s HTTP transport must bind its own port, so a systemd socket would have to hand off the listening FD to a Node HTTP server, which the tool does not support cleanly.
+- Requires the `playwright-mcp` package and `node`. The launcher prefers a *system* browser (chromium/chrome, then firefox) so the user's real profile/logins are driven and no Playwright browser build is downloaded; if none validates against the installed Playwright, it falls back to Playwright's own chromium (auto-installed on first need). Headed mode additionally needs a display (auto-detected — Wayland or X11).
 
 ### Playwright in the container (not chosen)
 Install `playwright`/`chromium` inside the container and run it headless or with a VNC.

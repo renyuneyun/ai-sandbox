@@ -9,9 +9,20 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now ai-sandbox-playwright
 #
+# ExecStart invokes `@PLAYWRIGHT_MCP_BIN@`: the launcher for the host-side
+# Playwright MCP browser service, installed with the package (as an absolute
+# path; installers substitute the marker below for the real install path). The
+# launcher resolves the installed `playwright-mcp` package and picks a browser:
+#   1. a *system* browser (chromium/chrome preferred, firefox fallback),
+#      validated headlessly at startup so version-mismatched builds are skipped;
+#   2. otherwise Playwright's own bundled chromium, auto-installed when needed.
+# The display (Wayland vs X11) is detected by the launcher, not hardcoded here.
+#
 # The server stays resident but only LAUNCHES the browser when an agent calls a
-# browser_* tool (headed by default). Adjust DISPLAY / add --headless below for
-# headless or remote (VNC/X-forwarding) operation.
+# browser_* tool (headed by default). For headless or remote (VNC/X-forwarding)
+# operation, set PLAYWRIGHT_MCP_HEADLESS=true below (the launcher then adds
+# --headless and skips display setup), and/or add --host 0.0.0.0 if you want to
+# accept connections beyond this machine.
 
 [Unit]
 Description=Playwright MCP browser server for ai-sandbox agent sandbox
@@ -21,19 +32,22 @@ After=network.target
 [Service]
 Type=simple
 # --port enables the standalone HTTP transport; endpoint is /mcp.
-ExecStart=npx --yes @playwright/mcp@latest --host 127.0.0.1 --port 8931
+# The launcher resolves the installed playwright-mcp binary, picks a system or
+# bundled browser, and detects the Wayland/X11 display (see the launcher's
+# comments). Add server flags here as needed.
+ExecStart=@PLAYWRIGHT_MCP_BIN@ --host 127.0.0.1 --port 8931
 Restart=on-failure
 RestartSec=3
-# node/npx may be installed outside the login-shell PATH (e.g. ~/.nvm).
-# Adjust PATH here or override ExecStart if npx is not resolved.
+# playwright-mcp may be installed outside the login-shell PATH (e.g. a
+# user/npm install under ~). Adjust PATH here if it is not resolved.
 Environment=PATH=%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=%h
-Environment=PLAYWRIGHT_BROWSERS_PATH=%h/.cache/ms-playwright
-# Show the browser on the host display so the user can see/interact with it.
-# For headless or remote operation, uncomment the line below and/or change
-# DISPLAY (e.g. to a VNC/EGL display).
-# Environment=PLAYWRIGHT_MCP_HEADLESS=true
-Environment=DISPLAY=:0
+# The display (Wayland vs X11) is detected automatically by the launcher, so it
+# is not hardcoded here. To force a specific display, set it explicitly, e.g.:
+#   Environment=DISPLAY=:1
+#   Environment=WAYLAND_DISPLAY=wayland-1
+# For headless or remote (VNC/X-forwarding) operation:
+#   Environment=PLAYWRIGHT_MCP_HEADLESS=true
 # One browser instance is allowed; concurrent sandbox sessions share it.
 TimeoutStopSec=10
 

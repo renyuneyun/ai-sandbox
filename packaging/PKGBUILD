@@ -7,8 +7,8 @@ arch=('any')
 url="https://github.com/renyuneyuny/claude-sandboxed"
 license=('Apache')
 depends=('docker')
-optdepends=('nodejs: npx runtime for the optional on-host Playwright MCP browser service'
-            'chromium: headed browser driven by the optional Playwright MCP browser service'
+optdepends=('nodejs: runtime for the optional on-host Playwright MCP browser service'
+            'chromium: preferred (system) browser driven by the optional Playwright MCP browser service; falls back to Playwright'"'"'s auto-installed own chromium'
             'playwright-mcp: the Playwright MCP server for the optional on-host browser service (AUR)')
 source=()
 sha256sums=()
@@ -26,6 +26,16 @@ package() {
     install -Dm644 "$_repodir/share/ai-sandbox/docker-compose.yml" "$pkgdir/usr/share/ai-sandbox/docker-compose.yml"
     install -Dm755 "$_repodir/share/ai-sandbox/git-wrapper" "$pkgdir/usr/share/ai-sandbox/git-wrapper"
     install -Dm644 "$_repodir/share/ai-sandbox/config.example.yaml" "$pkgdir/usr/share/ai-sandbox/config.example.yaml"
-    # systemd user unit installed to the packaged user-unit directory.
-    install -Dm644 "$_repodir/share/ai-sandbox/systemd/ai-sandbox-playwright.service" "$pkgdir/usr/lib/systemd/user/ai-sandbox-playwright.service"
+    # Launcher for the optional host-side Playwright MCP browser service; invoked
+    # by the systemd user unit. Lives in the package data dir (like git-wrapper)
+    # and is referenced by absolute path.
+    install -Dm755 "$_repodir/share/ai-sandbox/playwright-mcp" "$pkgdir/usr/share/ai-sandbox/playwright-mcp"
+    # systemd user unit installed to the packaged user-unit directory. Fill in
+    # the launcher's absolute path (the @PLAYWRIGHT_MCP_BIN@ marker) at package
+    # time.
+    mkdir -p "$pkgdir/usr/lib/systemd/user"
+    sed "s|@PLAYWRIGHT_MCP_BIN@|/usr/share/ai-sandbox/playwright-mcp|g" \
+        "$_repodir/share/ai-sandbox/systemd/ai-sandbox-playwright.service" \
+        > "$pkgdir/usr/lib/systemd/user/ai-sandbox-playwright.service"
+    chmod 644 "$pkgdir/usr/lib/systemd/user/ai-sandbox-playwright.service"
 }

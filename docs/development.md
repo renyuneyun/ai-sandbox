@@ -134,6 +134,8 @@ Priority order (first match wins), implemented in `bin/ai-sandbox`:
 47. **Submodule auto-mount:** from inside a submodule, its common git dir (target of the `.git` file) is mounted so git works without the superproject being reachable.
 48. **Symlink auto-mount:** with a skill symlink in `~/.claude/skills` pointing elsewhere, the target is mounted read-only at its real path and `ls -L ~/.claude/skills/<name>` resolves. Symlinks staying inside `~/.claude` are not duplicated.
 49. **Auto disabled:** with `mounts.auto.git_worktree: false` (or `mounts.enabled: false`), linked-worktree/submodule git dirs are not auto-mounted.
+50. **Browser display detection (Wayland):** with the `ai-sandbox-playwright` unit running on a Wayland session, its startup log reports `using Wayland display: <wl>` and the generated config includes `--ozone-platform=wayland`. On an X11-only or headless box (no `WAYLAND_DISPLAY`/`wayland-0` socket) it reports `using X11 display` and passes no ozone arg.
+51. **Browser bundled-chromium fallback:** with the unit running where no system chromium/firefox validates against the installed Playwright, its startup log reports `using Playwright's own chromium` and auto-installs it on first need (no crash on the first agent `browser_*` call). With a valid system browser it logs `using system chromium/firefox` and makes no install.
 
 ## Automated tests
 

@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# ai-sandbox-playwright-mcp
+#
+# Thin launcher for the host-side Playwright MCP browser service. It resolves
+# the installed `playwright-mcp` binary, picks a usable browser, and runs the
+# server with a generated config pointing at that browser.
+#
+# Browser selection (see pick_browser):
+#   1. A *system* browser (chromium/chrome first, firefox later) is preferred
+#      so the user's real browser/profile can be driven. Each candidate is
+#      validated at startup with a short headless probe using the installed
+#      Playwright, so a system browser that Playwright rejects by version is
+#      skipped instead of failing later.
+#   2. If no system browser validates, Playwright's OWN bundled chromium is
+#      used, auto-installing it when needed (run the bundled `playwright`
+#      install so the build matches the installed playwright-mcp exactly).
+#
+# Display selection (Wayland vs X11) is done here, not baked into the systemd
+# unit, so it adapts to the session:
+#   - Wayland wins when a WAYLAND_DISPLAY / $XDG_RUNTIME_DIR/wayland-N socket
+#     is present; chromium gets --ozone-platform=wayland.
+#   - Otherwise X11 $DISPLAY (:0 fallback) is set.
+# `PLAYWRIGHT_MCP_HEADLESS=true` forces --headless and skips display setup.
+#
+# Referenced (by absolute path) by the ai-sandbox-playwright systemd user unit.
+# It is installed into the package data dir (share/ai-sandbox via install.sh,
+# /usr/share/ai-sandbox via PKGBUILD) by both installers.
+
+set -euo pipefail
+
+log() { echo "ai-sandbox-playwright-mcp: $*" >&2; }
+
+# Resolve a possibly-symlinked path to its real target (portable; no readlink -f).
+real_path() {
+  local p="$1" i t
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -L "$p" ]] || break
+    t="$(readlink "$p" 2>/dev/null)" || break
+    case "$t" in
+      /*) p="$t" ;;
+      *) p="$(dirname "$p")/$t" ;;
+    esac
+  done
+  printf '%s' "$p"
+}
+
+# Locate the `playwright` package that `playwright-mcp` bundles/uses, so probes
+# and browser installs use the exact same engine/version. Sets PW_DIR.
+# Tries (a) ascending from the playwright-mcp binary for a nested node_modules,
+# (b) the npm global node_modules for a flat sibling layout.
+PW_DIR=""
+resolve_playwright() {
+  local bin real cur g
+  bin="$(command -v playwright-mcp 2>/dev/null)" || return 1
+  real="$(real_path "$bin")"
+  cur="$(dirname "$real")"
+  while true; do
+    if [[ -d "$cur/node_modules/playwright" ]]; then
+      PW_DIR="$cur/node_modules/playwright"
+      return 0
+    fi
+    [[ "$cur" == "/" || "$cur" == "." ]] && break
+    cur="$(dirname "$cur")"
+  done
+  g="$(command -v npm >/dev/null 2>&1 && npm root -g 2>/dev/null || true)"
+  if [[ -n "$g" && -d "$g/playwright" ]]; then
+    PW_DIR="$g/playwright"
+    return 0
+  fi
+  return 1
+}
+
+# Short, disposable headless launch to validate that a given executable is a
+# browser this Playwright can actually drive. Uses a throwaway profile (the
+# real Chrome profile is never touched). probe_browser NAME EXE
+probe_browser() {
+  local name="$1" exe="$2" probe="$(mktemp)" pid rc i t=30
+  cat > "$probe" <<'EOF'
+const [name, pw, exe] = [process.argv[2], process.argv[3], process.argv[4]];
+const { [name]: browser } = require(pw);
+browser.launch({ headless: true, executablePath: exe })
+  .then(b => b.close())
+  .then(() => process.exit(0))
+  .catch(() => process.exit(1));
+EOF
+  node "$probe" "$name" "$PW_DIR" "$exe" 2>/dev/null &
+  pid=$!
+  for i in $(seq 1 $((t * 10))); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null; rc=$?
+      rm -f "$probe"
+      return "$rc"
+    fi
+    sleep 0.1
+  done
+  kill -9 "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  rm -f "$probe"
+  return 1
+}
+
+# Ensure Playwright's own chromium build is installed (install is idempotent and
+# fast when already present). Uses the bundled playwright's cli so the build
+# matches; falls back to `npx` with a warning.
+install_bundled_chromium() {
+  if [[ -f "$PW_DIR/cli.js" ]]; then
+    if node "$PW_DIR/cli.js" install chromium 2>/dev/null; then
+      return 0
+    fi
+    log "bundled 'playwright install chromium' failed; trying 'npx playwright'"
+  else
+    log "'$PW_DIR/cli.js' not found; trying 'npx playwright'"
+  fi
+  if command -v npx >/dev/null 2>&1 && npx --yes playwright install chromium >/dev/null 2>&1; then
+    log "warning: installed a Playwright chromium, but via 'npx' whose build may mismatch this playwright-mcp release"
+    return 0
+  fi
+  log "warning: could not auto-install Playwright chromium; the browser may not launch"
+  return 1
+}
+
+# --- Display selection (Wayland vs X11). Headless needs none of this. ---
+HEADLESS=false
+[[ "${PLAYWRIGHT_MCP_HEADLESS:-}" == "true" ]] && HEADLESS=true
+
+LAUNCH_ARGS=()
+if [[ "$HEADLESS" == "false" ]]; then
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  local_wl=""
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    local_wl="$WAYLAND_DISPLAY"
+  elif [[ -S "$XDG_RUNTIME_DIR/wayland-0" ]]; then
+    local_wl="wayland-0"
+  fi
+  if [[ -n "$local_wl" && -S "$XDG_RUNTIME_DIR/$local_wl" ]]; then
+    export XDG_RUNTIME_DIR
+    export WAYLAND_DISPLAY="$local_wl"
+    log "using Wayland display: $local_wl"
+    LAUNCH_ARGS+=(--ozone-platform=wayland)
+  else
+    export DISPLAY="${DISPLAY:-:0}"
+    log "using X11 display: $DISPLAY"
+  fi
+fi
+
+# --- Browser selection. ---
+BROWSER_NAME=""
+BROWSER_EXE=""
+
+pick_browser() {
+  local c exe
+  for c in chromium chromium-browser google-chrome-stable google-chrome chrome; do
+    if command -v "$c" >/dev/null 2>&1; then
+      exe="$(command -v "$c")"
+      if [[ -n "$PW_DIR" ]] && probe_browser chromium "$exe"; then
+        BROWSER_NAME=chromium; BROWSER_EXE="$exe"
+        log "using system chromium: $exe"
+        return 0
+      fi
+      log "system chromium '$c' unusable with this Playwright; trying next"
+    fi
+  done
+  if command -v firefox >/dev/null 2>&1 && [[ -n "$PW_DIR" ]]; then
+    exe="$(command -v firefox)"
+    if probe_browser firefox "$exe"; then
+      BROWSER_NAME=firefox; BROWSER_EXE="$exe"
+      log "using system firefox: $exe"
+      return 0
+    fi
+    log "system firefox unusable with this Playwright; falling back to Playwright chromium"
+  fi
+  # No usable system browser: use Playwright's own chromium (auto-installed).
+  BROWSER_NAME=chromium; BROWSER_EXE=""
+  log "no usable system browser; using Playwright's own chromium"
+  [[ -n "$PW_DIR" ]] && install_bundled_chromium
+  return 0
+}
+
+# Minimal JSON string escaping for values we interpolate (paths/args).
+json_quote() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# --- Validate the playwright-mcp server binary exists. ---
+if ! command -v playwright-mcp >/dev/null 2>&1; then
+  log "'playwright-mcp' not found on PATH"
+  exit 1
+fi
+
+# Playwright resolution is required for probing/installing; if it cannot be
+# found, degrade gracefully to a plain system-chromium config (best effort).
+resolve_playwright || log "warning: could not resolve the 'playwright' package; browser probing/auto-install disabled"
+
+pick_browser
+
+# --- Compose the browser config for playwright-mcp. ---
+cfg=""
+cleanup() { [[ -n "$cfg" ]] && rm -f "$cfg"; }
+trap cleanup EXIT
+
+# Build launchOptions as JSON: an args array (e.g. --ozone-platform), plus
+# executablePath when a system browser is being driven. Emit each arg as a
+# quoted, escaped JSON string.
+args_json=""
+first=1
+for a in "${LAUNCH_ARGS[@]:-}"; do
+  [[ "$a" == "" ]] && continue
+  if [[ "$first" -eq 1 ]]; then
+    args_json="$(json_quote "$a")"; first=0
+  else
+    args_json="$args_json,$(json_quote "$a")"
+  fi
+done
+launch_opts="{\"args\":[$args_json]"
+if [[ -n "$BROWSER_EXE" ]]; then
+  launch_opts="$launch_opts,\"executablePath\":\"$(json_quote "$BROWSER_EXE")\""
+fi
+launch_opts="$launch_opts}"
+
+cfg="$(mktemp)"
+cat > "$cfg" <<EOF
+{"browser":{"browserName":"$(json_quote "$BROWSER_NAME")","launchOptions":$launch_opts}}
+EOF
+
+extra=()
+if [[ "$HEADLESS" == "true" ]]; then
+  extra+=(--headless)
+fi
+
+log "launching playwright-mcp with browser: $BROWSER_NAME${BROWSER_EXE:+ ($BROWSER_EXE)}"
+exec playwright-mcp --config "$cfg" "${extra[@]}" "$@"
