@@ -1,4 +1,4 @@
-# systemd --user unit for the claude-sandboxed host-side Playwright MCP browser
+# systemd --user unit for the ai-sandbox host-side Playwright MCP browser
 # service. It serves a remote HTTP MCP endpoint that sandboxed coding agents
 # reach through host networking (the container shares the host network), so the
 # browser runs ON THE HOST and is visible/interactive for the user.
@@ -7,14 +7,14 @@
 #   # installed by the package manager to /usr/lib/systemd/user, or by install.sh
 #   # to ~/.local/share/systemd/user (already on the systemd user search path).
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now claude-sandboxed-playwright
+#   systemctl --user enable --now ai-sandbox-playwright
 #
 # The server stays resident but only LAUNCHES the browser when an agent calls a
 # browser_* tool (headed by default). Adjust DISPLAY / add --headless below for
 # headless or remote (VNC/X-forwarding) operation.
 
 [Unit]
-Description=Playwright MCP browser server for claude-sandboxed agent sandbox
+Description=Playwright MCP browser server for ai-sandbox agent sandbox
 Documentation=https://github.com/renyuneyuny/claude-sandboxed
 After=network.target
 

@@ -1,6 +1,6 @@
-# claude-sandboxed
+# ai-sandbox
 
-Runs Claude Code, Codex CLI, or OpenCode inside a Docker sandbox with a shared workspace mount and git push protection. The package and command remain named `claude-sandboxed`; renaming is deferred.
+Runs Claude Code, Codex CLI, or OpenCode inside a Docker sandbox with a shared workspace mount and git push protection. The command is `ai-sandbox` (short alias `asb`).
 
 The main rationale of this project is to run Claude Code in autonomous mode (with `--dangerously-skip-permissions`) more safely, reducing harms to the user's machine / files. Whitebox protection is the main design, to provide deterministic guarantees (contrary to Anthrophic's probabilistic classifier).
 
@@ -15,13 +15,13 @@ The main rationale of this project is to run Claude Code in autonomous mode (wit
 
 ## Installation
 
-You may directly run `bin/claude-sandboxed`, but it may change. Proper installation is always preferred.
+You may directly run `bin/ai-sandbox`, but it may change. Proper installation is always preferred.
 
 ### Arch Linux
 
 ```sh
 git clone <repo-url>
-cd claude-sandboxed/packaging
+cd ai-sandbox/packaging
 makepkg -si
 ```
 
@@ -29,7 +29,7 @@ makepkg -si
 
 ```sh
 git clone <repo-url>
-cd claude-sandboxed
+cd ai-sandbox
 sudo ./install.sh
 ```
 
@@ -44,17 +44,18 @@ Any standard `<prefix>/bin` + `<prefix>/share` layout works (Homebrew `/opt/home
 ## Usage
 
 ```sh
-claude-sandboxed
-claude-sandboxed --tool codex
-claude-sandboxed --tool codex ~/projects/my-app
-claude-sandboxed --tool codex ~/projects/my-app -- --model gpt-5.4
-claude-sandboxed --tool opencode
-claude-sandboxed ~/projects/my-app -- --resume
+ai-sandbox
+asb                      # short alias
+ai-sandbox --tool codex
+asb-codex                # per-tool alias, equivalent to: ai-sandbox --tool codex
+asb-codex ~/projects/my-app -- --model gpt-5.4
+ai-sandbox --tool opencode
+ai-sandbox ~/projects/my-app -- --resume
 ```
 
-Claude is the default. Tool selection precedence is CLI `--tool` > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
+Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
-Set `CLAUDE_SANDBOXED_DIR` to override the directory containing `docker-compose.yml`.
+Set `AI_SANDBOX_DIR` to override the directory containing `docker-compose.yml`.
 
 Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
 
@@ -66,7 +67,7 @@ The sandbox can drive a browser that runs on the host, so the user sees and can 
 # 1. One-time: enable the host-side Playwright MCP service (installed with the
 #    package, into /usr/lib/systemd/user or ~/.local/share/systemd/user)
 systemctl --user daemon-reload
-systemctl --user enable --now claude-sandboxed-playwright
+systemctl --user enable --now ai-sandbox-playwright
 ```
 
 ```yaml
@@ -79,13 +80,13 @@ When enabled, the launcher passes `PLAYWRIGHT_MCP_URL` into the sandbox and (for
 
 ## Configuration
 
-Identity knobs can be set persistently via YAML config files instead of env vars. Two files are read, in priority order: `$WORKSPACE_DIR/.claude-sandboxed.yaml` (per-project) and `${XDG_CONFIG_HOME:-~/.config}/claude-sandboxed/config.yaml` (user defaults). Both are optional. Precedence per knob: env var > workspace config > user config > built-in default.
+Identity knobs can be set persistently via YAML config files instead of env vars. Two files are read, in priority order: `$WORKSPACE_DIR/.ai-sandbox.yaml` (per-project) and `${XDG_CONFIG_HOME:-~/.config}/ai-sandbox/config.yaml` (user defaults). Both are optional. Precedence per knob: env var > workspace config > user config > built-in default.
 
-A commented template is installed at `<prefix>/share/claude-sandboxed/config.example.yaml`. Copy it to get started:
+A commented template is installed at `<prefix>/share/ai-sandbox/config.example.yaml`. Copy it to get started:
 
 ```sh
-mkdir -p ~/.config/claude-sandboxed
-cp /usr/local/share/claude-sandboxed/config.example.yaml ~/.config/claude-sandboxed/config.yaml
+mkdir -p ~/.config/ai-sandbox
+cp /usr/local/share/ai-sandbox/config.example.yaml ~/.config/ai-sandbox/config.yaml
 ```
 
 Requires `yq` on the host; config files are ignored (with a warning) when `yq` is missing.
@@ -136,15 +137,7 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
     - [x] **Codex version** - pin Codex CLI via `CODEX_VERSION` or `codex.version`
     - [x] **OpenCode version** - pin OpenCode via `OPENCODE_VERSION` or `opencode.version`
     - [ ] Additional built-in coding agents
-- [ ] **Rename**: Rename the tool, together with some shorthands or common potential misunderstanding names
-    - Naming options:
-        - Option 1:
-            - Full name: agent-sandboxed, agent-sandbox, ai-sandboxed, ai-sandbox
-            - Short name: asb, asdb, or asd
-        - Option 2:
-            - Full name: sandboxed-agent, sandboxed-ai
-            - Short name: sba, sbda, sba
-    - Shorthands: TOOL_NAME-opencode, TOOL_NAME-claude, TOOL_NAME-codex
+- [x] **Rename** - named `ai-sandbox`, with the short alias `asb` and per-tool entrypoints `asb-claude` / `asb-codex` / `asb-opencode` (symlinks; the launcher auto-detects the tool from the invoked name. An explicit `--tool` still wins)
 - [ ] **More runtimes** - support other runtimes than Docker
 
 ## Testing

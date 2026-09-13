@@ -61,7 +61,7 @@ The current `network_mode: host` approach should be revisited if:
 
 ### Wrapper script (chosen)
 
-A bash wrapper at `/usr/local/bin/git` (bind-mounted from `share/claude-sandboxed/git-wrapper`) intercepts every `git` invocation. It parses argv, applies a blocklist of destructive subcommands plus flag-level checks, then `exec`s `/usr/bin/git` for allowed commands.
+A bash wrapper at `/usr/local/bin/git` (bind-mounted from `share/ai-sandbox/git-wrapper`) intercepts every `git` invocation. It parses argv, applies a blocklist of destructive subcommands plus flag-level checks, then `exec`s `/usr/bin/git` for allowed commands.
 
 **Why chosen:** Handles flag-level checks naturally (`git commit --amend` blocked while `git commit -m` allowed). Centralised, inspectable, works for all users. Cannot be overridden by user git config.
 
@@ -115,7 +115,7 @@ A resident systemd user service runs `@playwright/mcp` on the host, bound to `12
 ### Playwright in the container (not chosen)
 Install `playwright`/`chromium` inside the container and run it headless or with a VNC.
 
-**Why not used:** A headless in-container browser is invisible to the user (defeating the main point), needs a sizeable cache in the `claude-agent-home` volume, and headless displays must still be mirrored back out. On-demand host browser is both simpler and more aligned with the goal of user visibility.
+**Why not used:** A headless in-container browser is invisible to the user (defeating the main point), needs a sizeable cache in the `ai-agent-home` volume, and headless displays must still be mirrored back out. On-demand host browser is both simpler and more aligned with the goal of user visibility.
 
 ### Raw CDP to a host Chrome (alternative)
 Launch Chrome on the host with `--remote-debugging-port` and connect from inside over CDP.

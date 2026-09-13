@@ -1,6 +1,6 @@
 # Configuration
 
-`claude-sandboxed` reads optional YAML config files instead of requiring env vars for every knob. This page is the full reference. For project overview, installation, and features, see [README.md](../README.md).
+`ai-sandbox` reads optional YAML config files instead of requiring env vars for every knob. This page is the full reference. For project overview, installation, and features, see [README.md](../README.md).
 
 ## Config file locations
 
@@ -8,16 +8,16 @@ Two files are read, in priority order:
 
 | File | Purpose |
 |---|---|
-| `$WORKSPACE_DIR/.claude-sandboxed.yaml` | Per-project override |
-| `${XDG_CONFIG_HOME:-~/.config}/claude-sandboxed/config.yaml` | User defaults |
+| `$WORKSPACE_DIR/.ai-sandbox.yaml` | Per-project override |
+| `${XDG_CONFIG_HOME:-~/.config}/ai-sandbox/config.yaml` | User defaults |
 
 Both files are optional. Precedence per knob: env var > workspace config > user config > built-in default.
 
-A commented template is installed at `<prefix>/share/claude-sandboxed/config.example.yaml` (e.g. `/usr/local/share/claude-sandboxed/config.example.yaml`). Copy it to get started:
+A commented template is installed at `<prefix>/share/ai-sandbox/config.example.yaml` (e.g. `/usr/local/share/ai-sandbox/config.example.yaml`). Copy it to get started:
 
 ```sh
-mkdir -p ~/.config/claude-sandboxed
-cp /usr/local/share/claude-sandboxed/config.example.yaml ~/.config/claude-sandboxed/config.yaml
+mkdir -p ~/.config/ai-sandbox
+cp /usr/local/share/ai-sandbox/config.example.yaml ~/.config/ai-sandbox/config.yaml
 ```
 
 Edit the copy, uncommenting the lines you want to change. All fields are commented out by default, so the copied file has no effect until you edit it.
@@ -81,7 +81,7 @@ git:
       - "^stash pop"
 ```
 
-Example `~/.config/claude-sandboxed/config.yaml`:
+Example `~/.config/ai-sandbox/config.yaml`:
 
 ```yaml
 sandbox:
@@ -103,7 +103,7 @@ By default the launcher mirrors your host identity into the container so that fi
 Override any of them before invoking the script:
 
 ```sh
-SANDBOX_UID=4444 SANDBOX_GID=4444 SANDBOX_USERNAME=ryey claude-sandboxed
+SANDBOX_UID=4444 SANDBOX_GID=4444 SANDBOX_USERNAME=ryey ai-sandbox
 ```
 
 When `SANDBOX_UID=0`, the container runs as root and the user-creation step is skipped.
@@ -204,7 +204,7 @@ Uppercase and lowercase names are handled independently and values are preserved
 ```sh
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
-claude-sandboxed --tool codex
+ai-sandbox --tool codex
 ```
 
 The container uses host networking, so a proxy listening on the host at `127.0.0.1` is reachable. Host networking alone does not copy proxy settings or force clients through that proxy; the environment-variable passthrough configures proxy-aware clients to use it.
@@ -236,7 +236,7 @@ The unit is installed by the package manager (into `/usr/lib/systemd/user`) or b
 
 ```sh
 systemctl --user daemon-reload
-systemctl --user enable --now claude-sandboxed-playwright
+systemctl --user enable --now ai-sandbox-playwright
 ```
 
 This auto-starts it at login. It only launches the browser when an agent drives it — the browser appears on the host display (headed by default).
@@ -246,8 +246,8 @@ This auto-starts it at login. It only launches the browser when an agent drives 
 When `browser.enabled` is true, the launcher:
 
 - passes `PLAYWRIGHT_MCP_URL=$mcp_url` into the container (any agent or bit of code can use it to connect a Playwright client over CDP/HTTP);
-- generates a read-only MCP config file mounted at `/etc/claude-sandboxed/mcp-config.json`;
-- for **Claude** (the default tool), appends `--mcp-config /etc/claude-sandboxed/mcp-config.json`, registering the server as `playwright`. The agent can then call `browser_navigate`, `browser_click`, `browser_snapshot`, `browser_take_screenshot`, etc.
+- generates a read-only MCP config file mounted at `/etc/ai-sandbox/mcp-config.json`;
+- for **Claude** (the default tool), appends `--mcp-config /etc/ai-sandbox/mcp-config.json`, registering the server as `playwright`. The agent can then call `browser_navigate`, `browser_click`, `browser_snapshot`, `browser_take_screenshot`, etc.
 - for **Codex / OpenCode**, the server is reachable at any configured MCP endpoint; read `PLAYWRIGHT_MCP_URL` or register the remote server yourself (Codex reads `~/.codex/config.toml`, OpenCode reads its `mcp` config).
 
 The endpoint is bound to `127.0.0.1` on the host. Because the container uses host networking, the agent reaches it directly at `http://127.0.0.1:8931/mcp` — same mechanism as the host proxy.
@@ -258,11 +258,11 @@ The endpoint is bound to `127.0.0.1` on the host. Because the container uses hos
 - For headless or remote (SSH/VNC) operation, edit the unit's `Environment` (e.g. uncomment `PLAYWRIGHT_MCP_HEADLESS=true` or change `DISPLAY`).
 - The browser is a real resource on the host: the agent is granted full control of pages it is given, so only enable it where you trust the agent's browser activity.
 - Requires `npx`/Node.js on the host (the service runs `@playwright/mcp`). The first browser launch pulls the Playwright browser into `~/.cache/ms-playwright`.
-- The launcher does a lightweight reachability check when `browser.enabled` is true: if the endpoint is not up, it prints the one-liner to start the unit (`systemctl --user enable --now claude-sandboxed-playwright`) to stderr so the user is never left guessing.
+- The launcher does a lightweight reachability check when `browser.enabled` is true: if the endpoint is not up, it prints the one-liner to start the unit (`systemctl --user enable --now ai-sandbox-playwright`) to stderr so the user is never left guessing.
 
 ## Cleanup
 
-The launcher runs a small `cleanup` container after the main container exits to remove empty stub directories Docker may have created inside the `claude-agent-home` volume. Disable it to skip that one quick container startup:
+The launcher runs a small `cleanup` container after the main container exits to remove empty stub directories Docker may have created inside the `ai-agent-home` volume. Disable it to skip that one quick container startup:
 
 ```yaml
 sandbox:
@@ -297,7 +297,7 @@ Patterns are extended regex (ERE), matched against the git subcommand + args (gl
 To inspect the effective policy inside the container:
 
 ```sh
-cat /etc/claude-sandboxed/git-policy.conf
+cat /etc/ai-sandbox/git-policy.conf
 ```
 
 The file is only present when `git.policy` is set. When neither `allow` nor `block` is configured, the wrapper uses the built-in default policy directly.
@@ -309,7 +309,7 @@ When `git.allow_local_operations` is `true`, the wrapper blocks only `git push` 
 Intended for quick override from the command line when you trust the agent with local repository operations:
 
 ```sh
-claude-sandboxed --allow-local-git
+ai-sandbox --allow-local-git
 ```
 
 Remote push protection is unchanged: the wrapper still blocks `git push`, and the system git config in the container entrypoint still blocks SSH pushes and rewrites GitHub URLs to `https://prohibited/` as defense in depth.

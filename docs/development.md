@@ -4,14 +4,14 @@
 
 These must not be broken without updating all affected documentation:
 
-- `share/claude-sandboxed/docker-compose.yml` must stay at `share/claude-sandboxed/` relative to the repo root (dev-mode detection depends on it).
+- `share/ai-sandbox/docker-compose.yml` must stay at `share/ai-sandbox/` relative to the repo root (dev-mode detection depends on it).
 - The `ai-agent` service name must not change without updating every `docker compose run` call in the script.
 - `IS_SANDBOX=1` must remain set in the container environment.
 - The git push-blocking entrypoint must remain.
 - The `git-wrapper` bind mount (`./git-wrapper:/usr/local/bin/git:ro` in `ai-agent.volumes`) must remain. Removing it disables the git operation policy.
-- `share/claude-sandboxed/git-wrapper` must be executable (mode 755). `install.sh` and `packaging/PKGBUILD` must install it with mode 755.
+- `share/ai-sandbox/git-wrapper` must be executable (mode 755). `install.sh` and `packaging/PKGBUILD` must install it with mode 755.
 - `/usr/local/bin` must precede `/usr/bin` in the container's `PATH` (true for `node:22-bookworm` by default). If the base image changes, verify this.
-- The conditional `~/.gitconfig` and `~/.config/git/` mounts in `bin/claude-sandboxed` must check existence before mounting (avoids Docker creating empty stub dirs on the host).
+- The conditional `~/.gitconfig` and `~/.config/git/` mounts in `bin/ai-sandbox` must check existence before mounting (avoids Docker creating empty stub dirs on the host).
 - The entrypoint's `git config --system` calls must use `/usr/bin/git` (not `git`). The wrapper at `/usr/local/bin/git` blocks `config`, which would break the `&&` chain and skip `runuser`, leaving Claude Code running as root.
 - The workspace bind, per-UID home named volume, and selected-tool config bind must remain.
 - `WORKSPACE_DIR` must be exported before `docker compose up` — the compose file interpolates it.
@@ -22,14 +22,14 @@ These must not be broken without updating all affected documentation:
 - Tool API keys are forwarded dynamically through `TOOL_ENV_ARGS` only when present. Do not add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` as static Compose environment entries.
 - Proxy variables are forwarded through generic `PROXY_ENV_ARGS`, not through a tool profile or static Compose entries. When enabled, collect only non-empty `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase equivalents; preserve each name and value exactly. `configure_proxy_env` must remain outside the main guard for source-level tests.
 - `GIT_VOLUME_ARGS` remains the conditional read-only host git-config mounts. `GIT_POLICY_VOLUME_ARGS` remains the optional one-invocation generated policy bind.
-- The `GIT_POLICY_FILE` path (`/etc/claude-sandboxed/git-policy.conf`) is the contract between the launcher and the wrapper. Changing it requires updating both.
-- The browser MCP config path (`/etc/claude-sandboxed/mcp-config.json`) is the contract between the launcher and the Claude `--mcp-config`; it is generated only when `SANDBOX_BROWSER_ENABLED=true`. Changing it requires updating the launcher and this doc.
+- The `GIT_POLICY_FILE` path (`/etc/ai-sandbox/git-policy.conf`) is the contract between the launcher and the wrapper. Changing it requires updating both.
+- The browser MCP config path (`/etc/ai-sandbox/mcp-config.json`) is the contract between the launcher and the Claude `--mcp-config`; it is generated only when `SANDBOX_BROWSER_ENABLED=true`. Changing it requires updating the launcher and this doc.
 - `resolve_list`, `parse_launcher_args`, `resolve_tool`, `detect_host_version`, and `configure_tool` must remain defined outside the main guard (for testability), same as `check_config` and `resolve`.
 - The generated-file cleanup trap (`trap 'rm -f -- "$POLICY_FILE" "$MCP_CONFIG_FILE"' EXIT`, installed only when at least one generated file exists) must remain. Without it, temp git-policy and MCP-config files leak in `/tmp`.
-- `WORKSPACE_DIR` must be resolved to an absolute path before `WORKSPACE_CONFIG` is derived from it (the workspace config path is `$WORKSPACE_DIR/.claude-sandboxed.yaml`).
+- `WORKSPACE_DIR` must be resolved to an absolute path before `WORKSPACE_CONFIG` is derived from it (the workspace config path is `$WORKSPACE_DIR/.ai-sandbox.yaml`).
 - Config file functions (`check_config`, `resolve`) must remain defined outside the main execution guard so tests can source the launcher and call them directly.
-- All `docker compose` invocations must pass `-p "$COMPOSE_PROJECT"` (set to `claude-sandboxed-${SANDBOX_UID}`) — this namespaces containers and volumes per user, preventing conflicts on multi-user machines.
-- The names `claude-agent-home`, `claude-sandboxed-${SANDBOX_UID}`, and `ai-agent`, plus all installed `claude-sandboxed` paths, are stable contracts and must remain unchanged.
+- All `docker compose` invocations must pass `-p "$COMPOSE_PROJECT"` (set to `ai-sandbox-${SANDBOX_UID}`) — this namespaces containers and volumes per user, preventing conflicts on multi-user machines.
+- The names `ai-agent-home`, `ai-sandbox-${SANDBOX_UID}`, and `ai-agent`, plus all installed `ai-sandbox` paths, are stable contracts and must remain unchanged.
 - The compose file resolution order must not be reordered without updating the section below.
 
 ## Config resolution
@@ -37,11 +37,11 @@ These must not be broken without updating all affected documentation:
 Identity, git, proxy, cleanup, policy, browser, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
 
 1. **Env var** (`SANDBOX_UID`, etc.) - if set and non-empty.
-2. **Workspace config** (`$WORKSPACE_DIR/.claude-sandboxed.yaml`) - if the key is present and non-null.
-3. **User config** (`${XDG_CONFIG_HOME:-$HOME/.config}/claude-sandboxed/config.yaml`) - if the key is present and non-null.
+2. **Workspace config** (`$WORKSPACE_DIR/.ai-sandbox.yaml`) - if the key is present and non-null.
+3. **User config** (`${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandbox/config.yaml`) - if the key is present and non-null.
 4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty. `SANDBOX_BROWSER_ENABLED`: `false`. `SANDBOX_BROWSER_MCP_URL`: `http://127.0.0.1:8931/mcp`.
 
-Two bash functions in `bin/claude-sandboxed` implement this:
+Two bash functions in `bin/ai-sandbox` implement this:
 
 - `check_config FILE` - returns 0 if the file exists, `yq` is on `PATH`, and the YAML parses; returns 1 (with a stderr warning) otherwise. Missing files return 1 silently.
 - `resolve ENV_NAME YQ_PATH DEFAULT` - checks the env var, then the validated workspace config, then the validated user config, then the default. Consults `WORKSPACE_CONFIG_VALID` / `USER_CONFIG_VALID` flags set by up-front `check_config` calls.
@@ -51,11 +51,11 @@ Two bash functions in `bin/claude-sandboxed` implement this:
 
 ## Compose file location resolution
 
-Priority order (first match wins), implemented in `bin/claude-sandboxed`:
+Priority order (first match wins), implemented in `bin/ai-sandbox`:
 
-1. `$CLAUDE_SANDBOXED_DIR` — explicit override
+1. `$AI_SANDBOX_DIR` — explicit override
 2. `<script-dir>/../share/` — dev/repo checkout (`bin/` → `share/`)
-3. `<script-prefix>/share/claude-sandboxed` — installed package
+3. `<script-prefix>/share/ai-sandbox` — installed package
 
 ## PKGBUILD notes
 
@@ -67,9 +67,9 @@ Priority order (first match wins), implemented in `bin/claude-sandboxed`:
 
 ## Manual testing checklist
 
-1. **Dev mode:** run `./bin/claude-sandboxed` from the repo root — should pick up `share/claude-sandboxed/docker-compose.yml`.
-2. **Installed mode:** run `cd packaging && makepkg -si`, then run `claude-sandboxed` from an unrelated directory — should pick up `/usr/share/claude-sandboxed/docker-compose.yml`.
-3. **Override mode:** `CLAUDE_SANDBOXED_DIR=/some/path claude-sandboxed` — should use that path regardless.
+1. **Dev mode:** run `./bin/ai-sandbox` from the repo root — should pick up `share/ai-sandbox/docker-compose.yml`.
+2. **Installed mode:** run `cd packaging && makepkg -si`, then run `ai-sandbox` from an unrelated directory — should pick up `/usr/share/ai-sandbox/docker-compose.yml`.
+3. **Override mode:** `AI_SANDBOX_DIR=/some/path ai-sandbox` — should use that path regardless.
 4. **Push protection:** inside the container, `git push` should fail with the security message.
 5. **Git wrapper:** inside the container, `which git` shows `/usr/local/bin/git`.
 6. **Git policy - blocked:** inside the container, `git push`, `git reset --hard`, `git commit --amend`, `git clean -fd`, `git rebase`, `git config --get user.name`, `git commit-tree`, `git update-ref` all fail with `[SECURITY]` messages.
@@ -86,29 +86,29 @@ Priority order (first match wins), implemented in `bin/claude-sandboxed`:
 17. **Cleanup off:** with `sandbox.cleanup: false`, no `cleanup` container runs after exit. Stub dirs may remain in the volume (harmless).
 18. **Git policy allow:** with `git.policy.allow: ["^reset"]`, `git reset --hard HEAD~1` works inside the container.
 19. **Git policy block:** with `git.policy.block: ["^stash pop"]`, `git stash pop` is blocked with a "[SECURITY]" message.
-20. **Git policy file:** `cat /etc/claude-sandboxed/git-policy.conf` inside the container shows the effective policy.
+20. **Git policy file:** `cat /etc/ai-sandbox/git-policy.conf` inside the container shows the effective policy.
 21. **Git policy doesn't affect unmatched commands:** with `git.policy.allow: ["^reset"]`, `git push` is still blocked.
 22. **Git local-override:** with `--allow-local-git`, inside the container `git push` is blocked but `git reset --hard`, `git commit --amend`, `git config user.name X`, `git clean -fd`, `git rebase` all work.
 23. **Git local-override config:** with `git.allow_local_operations: true` in workspace config, the same behavior as `--allow-local-git` applies.
 24. **Git local-override warning:** with `--allow-local-git` and `git.policy.block: ["^stash pop"]` both set, the launcher prints a warning to stderr about policy rules being ignored.
 25. **Git local-override policy ignored:** with `--allow-local-git` and a policy file that blocks `git status`, `git status` still works inside the container.
-26. **Default Claude:** `claude-sandboxed` launches Claude with its autonomy flag.
-27. **Codex host login:** `claude-sandboxed --tool codex` uses host `~/.codex` and the Codex autonomy flag.
+26. **Default Claude:** `ai-sandbox` launches Claude with its autonomy flag.
+27. **Codex host login:** `ai-sandbox --tool codex` uses host `~/.codex` and the Codex autonomy flag.
 28. **Codex API-key isolation:** with passthrough disabled and `OPENAI_API_KEY` set, Codex starts without mounting host config.
 29. **Pinned versions:** verify both Claude and Codex YAML/env version knobs select the requested releases.
 30. **Exact passthrough:** arguments after `--`, including spaces and option-looking values, arrive unchanged.
 31. **Unsupported tool:** an unsupported `--tool` exits non-zero and lists Claude, Codex, and OpenCode.
-32. **Concurrent profiles:** Claude and Codex containers are independent, their config binds differ, and they share only the documented per-UID `claude-agent-home` named volume.
+32. **Concurrent profiles:** Claude and Codex containers are independent, their config binds differ, and they share only the documented per-UID `ai-agent-home` named volume.
 33. **Proxy passthrough:** set uppercase and lowercase proxy variables to distinct sentinel values; verify all non-empty values are visible inside both Claude and Codex containers and available to `npx`.
 34. **Proxy passthrough off:** set `proxy.env_passthrough: false` (and no environment override); verify none of the eight supported proxy variables is present inside the container.
-35. **OpenCode host login:** `claude-sandboxed --tool opencode` uses host `~/.config/opencode` and `~/.local/share/opencode` (auth + sessions) and the `--auto` autonomy flag.
+35. **OpenCode host login:** `ai-sandbox --tool opencode` uses host `~/.config/opencode` and `~/.local/share/opencode` (auth + sessions) and the `--auto` autonomy flag.
 36. **OpenCode API-key isolation:** with both passthroughs disabled and `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) set, OpenCode starts without mounting host config or data.
 37. **OpenCode custom paths:** with `opencode.config_dir` / `opencode.data_dir` pointing at custom host paths, the container mounts them at `${SANDBOX_HOME}/.config/opencode` / `${SANDBOX_HOME}/.local/share/opencode`.
-38. **Browser disabled (default):** with no browser config, the container has no `PLAYWRIGHT_MCP_URL` env, no `/etc/claude-sandboxed/mcp-config.json` mount, and Claude gets no `--mcp-config` arg.
-39. **Browser enabled (Claude):** with `browser.enabled: true`, `PLAYWRIGHT_MCP_URL` is passed, the mcp-config is mounted read-only, and Claude's Docker args include `--mcp-config /etc/claude-sandboxed/mcp-config.json`.
+38. **Browser disabled (default):** with no browser config, the container has no `PLAYWRIGHT_MCP_URL` env, no `/etc/ai-sandbox/mcp-config.json` mount, and Claude gets no `--mcp-config` arg.
+39. **Browser enabled (Claude):** with `browser.enabled: true`, `PLAYWRIGHT_MCP_URL` is passed, the mcp-config is mounted read-only, and Claude's Docker args include `--mcp-config /etc/ai-sandbox/mcp-config.json`.
 40. **Browser enabled (Codex/OpenCode):** with `browser.enabled: true` and `--tool codex`, `PLAYWRIGHT_MCP_URL` is still passed but no `--mcp-config` arg is added.
 41. **Browser URL override:** with `browser.mcp_url` (or `SANDBOX_BROWSER_MCP_URL`) set, the injected `PLAYWRIGHT_MCP_URL` and the mcp-config `url` both use that value; the default is `http://127.0.0.1:8931/mcp`.
-42. **Browser unstarted hint:** with `browser.enabled: true` and a non-reachable endpoint, the launcher prints the `systemctl --user enable --now claude-sandboxed-playwright` hint to stderr. With a reachable endpoint (or browser disabled) it does not.
+42. **Browser unstarted hint:** with `browser.enabled: true` and a non-reachable endpoint, the launcher prints the `systemctl --user enable --now ai-sandbox-playwright` hint to stderr. With a reachable endpoint (or browser disabled) it does not.
 
 ## Automated tests
 

@@ -14,7 +14,7 @@
 
 Claude receives `--dangerously-skip-permissions`; Codex receives `--dangerously-bypass-approvals-and-sandbox`. The container limits the blast radius while the selected coding agent operates autonomously.
 
-Multiple sessions can run in parallel. Per-user project naming (`claude-sandboxed-${SANDBOX_UID}`) isolates different host UIDs; Claude and Codex sessions for one UID share the same `claude-agent-home` named volume.
+Multiple sessions can run in parallel. Per-user project naming (`ai-sandbox-${SANDBOX_UID}`) isolates different host UIDs; Claude and Codex sessions for one UID share the same `ai-agent-home` named volume.
 
 ## Network isolation
 
@@ -26,14 +26,14 @@ Improving network isolation is a planned future goal. The current focus is on fi
 
 ### On-host browser service (optional)
 
-A selected agent does not get a browser inside the container. Instead, browser automation is served *from the host*: a Playwright MCP server (`@playwright/mcp`, shipped as the systemd user unit `claude-sandboxed-playwright.service`) listens on `127.0.0.1` on the host. Because the container uses host networking, the agent reaches it at `http://127.0.0.1:<port>/mcp`. The browser runs on the host as the host user, is headed by default (the user sees and can interact with it), and is only launched when the agent first drives a `browser_*` tool. The launcher wires this up when `browser.enabled` is true: it passes `PLAYWRIGHT_MCP_URL`, and for Claude registers the remote MCP server via a generated read-only `--mcp-config` mounted at `/etc/claude-sandboxed/mcp-config.json`. No state from the sandbox reaches the browser; the browser's profile lives under the host user's `~/.cache/ms-playwright`.
+A selected agent does not get a browser inside the container. Instead, browser automation is served *from the host*: a Playwright MCP server (`@playwright/mcp`, shipped as the systemd user unit `ai-sandbox-playwright.service`) listens on `127.0.0.1` on the host. Because the container uses host networking, the agent reaches it at `http://127.0.0.1:<port>/mcp`. The browser runs on the host as the host user, is headed by default (the user sees and can interact with it), and is only launched when the agent first drives a `browser_*` tool. The launcher wires this up when `browser.enabled` is true: it passes `PLAYWRIGHT_MCP_URL`, and for Claude registers the remote MCP server via a generated read-only `--mcp-config` mounted at `/etc/ai-sandbox/mcp-config.json`. No state from the sandbox reaches the browser; the browser's profile lives under the host user's `~/.cache/ms-playwright`.
 
 ## Volume layout and lifecycle
 
 | Mount | Scope | Lifecycle |
 |---|---|---|
 | Workspace bind | Selected project | Host files persist; container is ephemeral |
-| `claude-agent-home` named volume | Host UID | Shared across tools/workspaces/sessions until Docker removal |
+| `ai-agent-home` named volume | Host UID | Shared across tools/workspaces/sessions until Docker removal |
 | Tool-config bind | Host user by default; configurable per workspace | Host files persist; read/write |
 | Git-config bind | Host user | Host files persist; read-only in container |
 | Generated policy bind | One launcher invocation | Temporary host file removed by exit trap; read-only |
@@ -67,7 +67,7 @@ Git config precedence is system < global, so a user's `~/.gitconfig` could overr
 
 ## Git operation policy
 
-A wrapper script at `share/claude-sandboxed/git-wrapper` is bind-mounted to `/usr/local/bin/git` in the container (read-only). The `node:22-bookworm` image's default `PATH` has `/usr/local/bin` before `/usr/bin`, so `git` invocations hit the wrapper. The wrapper parses argv, applies a blocklist of destructive subcommands plus flag-level checks on allowed subcommands, then `exec`s `/usr/bin/git` for allowed commands.
+A wrapper script at `share/ai-sandbox/git-wrapper` is bind-mounted to `/usr/local/bin/git` in the container (read-only). The `node:22-bookworm` image's default `PATH` has `/usr/local/bin` before `/usr/bin`, so `git` invocations hit the wrapper. The wrapper parses argv, applies a blocklist of destructive subcommands plus flag-level checks on allowed subcommands, then `exec`s `/usr/bin/git` for allowed commands.
 
 The wrapper does **not** strip user-supplied `-c` flags or `GIT_CONFIG_*` env vars. The defense is that push is blocked at the subcommand level, and `~/.gitconfig` is read-only.
 

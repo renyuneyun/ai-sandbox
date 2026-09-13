@@ -4,7 +4,7 @@
 
 set -u
 
-WRAPPER_DIR="$(cd "$(dirname "$0")/../../share/claude-sandboxed" && pwd)"
+WRAPPER_DIR="$(cd "$(dirname "$0")/../../share/ai-sandbox" && pwd)"
 WRAPPER="$WRAPPER_DIR/git-wrapper"
 
 STUB_DIR="$(mktemp -d)"

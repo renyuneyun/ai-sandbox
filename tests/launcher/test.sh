@@ -2,7 +2,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LAUNCHER="$SCRIPT_DIR/../../bin/claude-sandboxed"
+LAUNCHER="$SCRIPT_DIR/../../bin/ai-sandbox"
 # shellcheck source=/dev/null
 source "$LAUNCHER"
 
@@ -324,7 +324,7 @@ run_captured_launcher() {
     HTTPS_PROXY= ALL_PROXY= NO_PROXY= \
     http_proxy= https_proxy= all_proxy= no_proxy= \
     SANDBOX_PROXY_ENV_PASSTHROUGH="${TEST_PROXY_PASSTHROUGH:-true}" \
-    CLAUDE_SANDBOXED_DIR="$SCRIPT_DIR/../../share/claude-sandboxed" \
+    AI_SANDBOX_DIR="$SCRIPT_DIR/../../share/ai-sandbox" \
     PATH="$capture_dir/bin:$PATH" \
       bash "$LAUNCHER" "$@"
     mapfile -d '' -t CAPTURED_DOCKER_ARGS < "$capture_dir/docker.args"
@@ -405,10 +405,10 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
 [[ "$CAPTURED_JOINED" == *"<-e><PLAYWRIGHT_MCP_URL=http://127.0.0.1:8931/mcp>"* ]] &&
   ok "browser: PLAYWRIGHT_MCP_URL reaches Docker" ||
   bad "browser: PLAYWRIGHT_MCP_URL reaches Docker ($CAPTURED_JOINED)"
-[[ "$CAPTURED_JOINED" == *":/etc/claude-sandboxed/mcp-config.json:ro>"* ]] &&
+[[ "$CAPTURED_JOINED" == *":/etc/ai-sandbox/mcp-config.json:ro>"* ]] &&
   ok "browser: mcp-config mounted read-only" ||
   bad "browser: mcp-config mounted read-only ($CAPTURED_JOINED)"
-[[ "$CAPTURED_JOINED" == *"<--mcp-config></etc/claude-sandboxed/mcp-config.json>"* ]] &&
+[[ "$CAPTURED_JOINED" == *"<--mcp-config></etc/ai-sandbox/mcp-config.json>"* ]] &&
   ok "browser: Claude gets --mcp-config" ||
   bad "browser: Claude gets --mcp-config ($CAPTURED_JOINED)"
 
@@ -458,7 +458,7 @@ run_launcher_stderr() {
     SANDBOX_HOME=/home/tester \
     SANDBOX_CLEANUP=false \
     CLAUDE_VERSION=integration-test \
-    CLAUDE_SANDBOXED_DIR="$SCRIPT_DIR/../../share/claude-sandboxed" \
+    AI_SANDBOX_DIR="$SCRIPT_DIR/../../share/ai-sandbox" \
     PATH="$capture_dir/bin:$PATH" \
       bash "$LAUNCHER" "$@" 2>&1 >/dev/null
 }
@@ -504,11 +504,65 @@ fi
 HINT_DIR="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$HINT_DIR")
 hint_out=$(SANDBOX_BROWSER_ENABLED=true SANDBOX_BROWSER_MCP_URL='http://127.0.0.1:59999/mcp' run_launcher_stderr "$HINT_DIR" "$SCRIPT_DIR/../..")
-if [[ "$hint_out" == *"systemctl --user enable --now claude-sandboxed-playwright"* ]]; then
+if [[ "$hint_out" == *"systemctl --user enable --now ai-sandbox-playwright"* ]]; then
     ok "browser: unreachable endpoint emits systemd start hint"
 else
     bad "browser: unreachable endpoint emits systemd start hint (got '$hint_out')"
 fi
+
+# --- Entrypoint symlink auto-detection ---
+# asb-claude / asb-codex / asb-opencode select the tool from the invoked name;
+# asb and ai-sandbox use normal precedence. An explicit --tool still wins.
+run_entrypoint() {
+    local name="$1"; shift
+    local edir; edir="$(mktemp -d)"
+    PROFILE_TMP_DIRS+=("$edir")
+    mkdir -p "$edir/bin" "$edir/home"
+    printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "$DOCKER_CAPTURE"\n' > "$edir/bin/docker"
+    chmod +x "$edir/bin/docker"
+    ln -s "$LAUNCHER" "$edir/$name"
+    DOCKER_CAPTURE="$edir/docker.args" \
+    HOME="$edir/home" \
+    XDG_CONFIG_HOME="$edir/home/.config" \
+    SANDBOX_UID=1234 SANDBOX_GID=1234 SANDBOX_USERNAME=tester SANDBOX_HOME=/home/tester \
+    SANDBOX_CLEANUP=false \
+    CLAUDE_VERSION=entry-test CODEX_VERSION=entry-test OPENCODE_VERSION=entry-test \
+    SANDBOX_PROXY_ENV_PASSTHROUGH=false \
+    AI_SANDBOX_DIR="$SCRIPT_DIR/../../share/ai-sandbox" \
+    PATH="$edir/bin:$edir:$PATH" \
+      bash "$edir/$name" "$@"
+    mapfile -d '' -t CAPTURED_DOCKER_ARGS < "$edir/docker.args"
+}
+
+run_entrypoint asb-codex "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<@openai/codex@entry-test>"* ]] &&
+  ok "entrypoint: asb-codex selects codex" ||
+  bad "entrypoint: asb-codex selects codex ($CAPTURED_JOINED)"
+
+run_entrypoint asb-opencode "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<opencode-ai@entry-test>"* ]] &&
+  ok "entrypoint: asb-opencode selects opencode" ||
+  bad "entrypoint: asb-opencode selects opencode ($CAPTURED_JOINED)"
+
+run_entrypoint asb-claude "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<@anthropic-ai/claude-code@entry-test>"* ]] &&
+  ok "entrypoint: asb-claude selects claude" ||
+  bad "entrypoint: asb-claude selects claude ($CAPTURED_JOINED)"
+
+run_entrypoint asb "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<@anthropic-ai/claude-code@entry-test>"* ]] &&
+  ok "entrypoint: asb defaults to claude" ||
+  bad "entrypoint: asb defaults to claude ($CAPTURED_JOINED)"
+
+run_entrypoint asb-claude --tool codex "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<@openai/codex@entry-test>"* ]] &&
+  ok "entrypoint: explicit --tool beats asb-claude" ||
+  bad "entrypoint: explicit --tool beats asb-claude ($CAPTURED_JOINED)"
 
 assert_rejected_before_docker() {
     local name="$1" expected_error="$2"

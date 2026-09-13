@@ -5,7 +5,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LAUNCHER="$SCRIPT_DIR/../../bin/claude-sandboxed"
+LAUNCHER="$SCRIPT_DIR/../../bin/ai-sandbox"
 
 # Source the launcher to get check_config and resolve functions.
 # The main guard ensures sourcing doesn't trigger docker compose.

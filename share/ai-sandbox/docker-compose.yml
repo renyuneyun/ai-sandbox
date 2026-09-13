@@ -9,10 +9,10 @@ services:
       #    Mounted at its exact host path so the selected agent sees the same host path.
       - ${WORKSPACE_DIR}:${WORKSPACE_DIR}
       # 2. PERSISTENT CACHE: Saves manual tools, packages, global settings, and histories
-      - claude-agent-home:${SANDBOX_HOME}
+      - ai-agent-home:${SANDBOX_HOME}
       # 3. SELECTED-TOOL CONFIG PASS-THROUGH: Injected dynamically by the launcher
       #    (TOOL_VOLUME_ARGS) so it can be toggled via config.
-      #    See bin/claude-sandboxed for the conditional mount logic.
+      #    See bin/ai-sandbox for the conditional mount logic.
       # 4. GIT WRAPPER: Intercepts git calls to block destructive operations.
       #    Read-only; /usr/local/bin precedes /usr/bin in PATH inside node:22-bookworm.
       - ./git-wrapper:/usr/local/bin/git:ro
@@ -41,12 +41,12 @@ services:
       [ '${SANDBOX_UID}' != '0' ] && exec runuser -u ${SANDBOX_USERNAME} -- \"$$@\" || exec \"$$@\"
       " --
 
-  # Removes empty stub directories that Docker created inside the claude-agent-home volume
+  # Removes empty stub directories that Docker created inside the ai-agent-home volume
   # as mount-point parents for WORKSPACE_DIR. Run after the ai-agent container exits.
   cleanup:
     image: busybox
     volumes:
-      - claude-agent-home:${SANDBOX_HOME}
+      - ai-agent-home:${SANDBOX_HOME}
     environment:
       - SANDBOX_HOME
       - WORKSPACE_DIR
@@ -60,4 +60,4 @@ services:
       "
 
 volumes:
-  claude-agent-home:
+  ai-agent-home:

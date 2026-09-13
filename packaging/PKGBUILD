@@ -1,8 +1,8 @@
 # Maintainer: renyuneyun (Rui Zhao) <email@ryey.icu>
-pkgname=claude-sandboxed
+pkgname=ai-sandbox
 pkgver=0.5.0
 pkgrel=1
-pkgdesc="Sandboxed Claude Code environment using Docker, with git push protection"
+pkgdesc="Sandboxed coding-agent runtime (Claude Code, Codex, OpenCode) with git push protection"
 arch=('any')
 url="https://github.com/renyuneyuny/claude-sandboxed"
 license=('Apache')
@@ -16,10 +16,10 @@ sha256sums=()
 _repodir="$(realpath ..)"
 
 package() {
-    install -Dm755 "$_repodir/bin/claude-sandboxed" "$pkgdir/usr/bin/claude-sandboxed"
-    install -Dm644 "$_repodir/share/claude-sandboxed/docker-compose.yml" "$pkgdir/usr/share/claude-sandboxed/docker-compose.yml"
-    install -Dm755 "$_repodir/share/claude-sandboxed/git-wrapper" "$pkgdir/usr/share/claude-sandboxed/git-wrapper"
-    install -Dm644 "$_repodir/share/claude-sandboxed/config.example.yaml" "$pkgdir/usr/share/claude-sandboxed/config.example.yaml"
+    install -Dm755 "$_repodir/bin/ai-sandbox" "$pkgdir/usr/bin/ai-sandbox"
+    install -Dm644 "$_repodir/share/ai-sandbox/docker-compose.yml" "$pkgdir/usr/share/ai-sandbox/docker-compose.yml"
+    install -Dm755 "$_repodir/share/ai-sandbox/git-wrapper" "$pkgdir/usr/share/ai-sandbox/git-wrapper"
+    install -Dm644 "$_repodir/share/ai-sandbox/config.example.yaml" "$pkgdir/usr/share/ai-sandbox/config.example.yaml"
     # systemd user unit installed to the packaged user-unit directory.
-    install -Dm644 "$_repodir/share/claude-sandboxed/systemd/claude-sandboxed-playwright.service" "$pkgdir/usr/lib/systemd/user/claude-sandboxed-playwright.service"
+    install -Dm644 "$_repodir/share/ai-sandbox/systemd/ai-sandbox-playwright.service" "$pkgdir/usr/lib/systemd/user/ai-sandbox-playwright.service"
 }

@@ -10,11 +10,11 @@ check_config() {  # FILE
   local f="$1"
   [[ -f "$f" ]] || return 1
   if ! command -v yq >/dev/null 2>&1; then
-    echo "claude-sandboxed: yq not found; ignoring $f" >&2
+    echo "ai-sandbox: yq not found; ignoring $f" >&2
     return 1
   fi
   if ! yq '.' "$f" >/dev/null 2>&1; then
-    echo "claude-sandboxed: malformed YAML in $f; ignoring" >&2
+    echo "ai-sandbox: malformed YAML in $f; ignoring" >&2
     return 1
   fi
   return 0
@@ -54,7 +54,7 @@ resolve_list() {  # ENV_NAME YQ_PATH
 }
 
 launcher_error() {
-  echo "claude-sandboxed: $*" >&2
+  echo "ai-sandbox: $*" >&2
   return 2
 }
 
@@ -239,12 +239,25 @@ configure_proxy_env() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 set -e
 
+# Tool auto-detection from the invoked entrypoint name: asb-claude, asb-codex,
+# asb-opencode. Syntactic (symlink) sugar for `--tool <name>`. An explicit
+# `--tool` still wins because parse_launcher_args runs afterwards and overrides
+# CLI_TOOL. `asb` and `ai-sandbox` select the tool by normal precedence.
+case "$(basename "$0")" in
+  asb-claude)   ENTRYPOINT_TOOL="claude"   ;;
+  asb-codex)    ENTRYPOINT_TOOL="codex"    ;;
+  asb-opencode) ENTRYPOINT_TOOL="opencode" ;;
+  *)            ENTRYPOINT_TOOL=""         ;;
+esac
+
 if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
-    echo "claude-sandboxed $VERSION"
+    echo "ai-sandbox $VERSION"
     exit 0
 fi
 
 parse_launcher_args "$@"
+# Apply the entrypoint default only when no --tool was given.
+[[ -z "$CLI_TOOL" && -n "$ENTRYPOINT_TOOL" ]] && CLI_TOOL="$ENTRYPOINT_TOOL"
 
 # Target folder defaults to the directory you are currently standing in
 export WORKSPACE_DIR="${WORKSPACE_ARG:-$(pwd)}"
@@ -260,8 +273,8 @@ WORKSPACE_DIR="$(cd "$WORKSPACE_DIR" && pwd)" || {
 export WORKSPACE_DIR
 
 # Config file discovery.
-USER_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/claude-sandboxed/config.yaml"
-WORKSPACE_CONFIG="$WORKSPACE_DIR/.claude-sandboxed.yaml"
+USER_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandbox/config.yaml"
+WORKSPACE_CONFIG="$WORKSPACE_DIR/.ai-sandbox.yaml"
 
 # Validate each config file once; resolve() consults these flags.
 WORKSPACE_CONFIG_VALID=false; check_config "$WORKSPACE_CONFIG" && WORKSPACE_CONFIG_VALID=true
@@ -294,17 +307,17 @@ SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH="$(resolve SANDBOX_GIT_HOST_CONFIG_PASSTHROU
 SANDBOX_CLEANUP="$(resolve SANDBOX_CLEANUP .sandbox.cleanup true)"
 
 # Per-user project name keeps containers and volumes isolated on multi-user machines.
-# Each user gets their own container and their own claude-agent-home volume.
-COMPOSE_PROJECT="claude-sandboxed-${SANDBOX_UID}"
+# Each user gets their own container and their own ai-agent-home volume.
+COMPOSE_PROJECT="ai-sandbox-${SANDBOX_UID}"
 
 # Resolve the data directory relative to this script's install prefix, supporting
 # any layout (/usr, /usr/local, /opt/homebrew, etc.) and direct repo usage.
-# Override by setting CLAUDE_SANDBOXED_DIR in your environment.
-if [[ -n "$CLAUDE_SANDBOXED_DIR" ]]; then
-    SANDBOX_COMPOSE_DIR="$CLAUDE_SANDBOXED_DIR"
+# Override by setting AI_SANDBOX_DIR in your environment.
+if [[ -n "$AI_SANDBOX_DIR" ]]; then
+    SANDBOX_COMPOSE_DIR="$AI_SANDBOX_DIR"
 else
     _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    SANDBOX_COMPOSE_DIR="$(cd "$_script_dir/../share/claude-sandboxed" && pwd)"
+    SANDBOX_COMPOSE_DIR="$(cd "$_script_dir/../share/ai-sandbox" && pwd)"
 fi
 
 # Git config inheritance: bind-mount host ~/.gitconfig and ~/.config/git/
@@ -336,7 +349,7 @@ fi
 
 # Git operation policy: user-defined allow/block regex lists that patch the
 # default wrapper policy. Passed into the container as a generated file
-# mounted at /etc/claude-sandboxed/git-policy.conf.
+# mounted at /etc/ai-sandbox/git-policy.conf.
 SANDBOX_GIT_POLICY_ALLOW="$(resolve_list SANDBOX_GIT_POLICY_ALLOW .git.policy.allow)"
 SANDBOX_GIT_POLICY_BLOCK="$(resolve_list SANDBOX_GIT_POLICY_BLOCK .git.policy.block)"
 
@@ -354,7 +367,7 @@ if [[ -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ]]; then
         echo "[block]"
         printf '%s\n' "$SANDBOX_GIT_POLICY_BLOCK"
     } > "$POLICY_FILE"
-    GIT_POLICY_VOLUME_ARGS+=(-v "$POLICY_FILE:/etc/claude-sandboxed/git-policy.conf:ro")
+    GIT_POLICY_VOLUME_ARGS+=(-v "$POLICY_FILE:/etc/ai-sandbox/git-policy.conf:ro")
 fi
 
 # Git local-override env var: passed into the container only when true.
@@ -366,7 +379,7 @@ fi
 # Warn when local-override is on but user policy lists are also set (they'll be ignored).
 if [[ "$SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS" == "true" && \
       ( -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ) ]]; then
-    echo "claude-sandboxed: git.allow_local_operations is enabled; git.policy.allow/block rules will be ignored." >&2
+    echo "ai-sandbox: git.allow_local_operations is enabled; git.policy.allow/block rules will be ignored." >&2
 fi
 
 # --- Host-side browser service (Playwright MCP) ---
@@ -399,15 +412,15 @@ if [[ "$SANDBOX_BROWSER_ENABLED" == "true" ]]; then
 EOF
     # Mounted read-only at a fixed path inside the container (the contract
     # between the launcher and the agent config).
-    BROWSER_VOLUME_ARGS+=(-v "$MCP_CONFIG_FILE:/etc/claude-sandboxed/mcp-config.json:ro")
+    BROWSER_VOLUME_ARGS+=(-v "$MCP_CONFIG_FILE:/etc/ai-sandbox/mcp-config.json:ro")
     if [[ "$SELECTED_TOOL" == claude ]]; then
-        TOOL_DEFAULT_ARGS+=(--mcp-config /etc/claude-sandboxed/mcp-config.json)
+        TOOL_DEFAULT_ARGS+=(--mcp-config /etc/ai-sandbox/mcp-config.json)
     fi
     # Hint how to start the on-host browser service when it is not reachable.
     if ! browser_endpoint_reachable "$SANDBOX_BROWSER_MCP_URL"; then
-        echo "claude-sandboxed: browser MCP endpoint $SANDBOX_BROWSER_MCP_URL is not reachable." >&2
-        echo "claude-sandboxed: to use the on-host browser, start the service with:" >&2
-        echo "claude-sandboxed:   systemctl --user enable --now claude-sandboxed-playwright" >&2
+        echo "ai-sandbox: browser MCP endpoint $SANDBOX_BROWSER_MCP_URL is not reachable." >&2
+        echo "ai-sandbox: to use the on-host browser, start the service with:" >&2
+        echo "ai-sandbox:   systemctl --user enable --now ai-sandbox-playwright" >&2
     fi
 fi
 
@@ -418,7 +431,7 @@ if [[ -n "$POLICY_FILE" || -n "$MCP_CONFIG_FILE" ]]; then
 fi
 
 # Run the selected coding agent in a one-shot container.
-# Each invocation gets its own container; named volumes (claude-agent-home) persist across runs.
+# Each invocation gets its own container; named volumes (ai-agent-home) persist across runs.
 docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
   --rm \
   -e HOME="${SANDBOX_HOME}" \
@@ -434,7 +447,7 @@ docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml
   -it ai-agent \
   npx --yes "$TOOL_PACKAGE" "${TOOL_DEFAULT_ARGS[@]}" "${TOOL_USER_ARGS[@]}"
 
-# Clean up empty stub directories that Docker created inside the claude-agent-home volume
+# Clean up empty stub directories that Docker created inside the ai-agent-home volume
 # as mount-point parents for WORKSPACE_DIR. This must run after the main container exits
 # (and its bind mounts are released) using a separate container that mounts only the volume.
 #

@@ -1,8 +1,8 @@
-# claude-sandboxed configuration file
+# ai-sandbox configuration file
 #
 # Copy this file to one of these locations:
-#   ${XDG_CONFIG_HOME:-~/.config}/claude-sandboxed/config.yaml   (user defaults)
-#   $WORKSPACE_DIR/.claude-sandboxed.yaml                         (per-project override)
+#   ${XDG_CONFIG_HOME:-~/.config}/ai-sandbox/config.yaml   (user defaults)
+#   $WORKSPACE_DIR/.ai-sandbox.yaml                         (per-project override)
 #
 # All fields are optional. Uncomment and edit the values you want to change.
 # Precedence per knob: env var > workspace config > user config > built-in default.
@@ -73,7 +73,7 @@ proxy:
 browser:
   # Let the sandboxed agent drive a browser that runs ON THE HOST and is
   # visible/interactive for the user. The agent connects to a Playwright MCP
-  # server started by a systemd user service (`claude-sandboxed-playwright`);
+  # server started by a systemd user service (`ai-sandbox-playwright`);
   # host networking makes it reachable at 127.0.0.1 from inside. When enabled,
   # the launcher passes PLAYWRIGHT_MCP_URL and, for Claude, registers the MCP
   # server automatically. The browser is only launched when the agent drives it.
@@ -127,7 +127,7 @@ git:
   #        command is blocked even if the default allows it.
   #
   # The effective policy can be inspected inside the container:
-  #   cat /etc/claude-sandboxed/git-policy.conf
+  #   cat /etc/ai-sandbox/git-policy.conf
   #
   # Default policy (built-in, for reference):
   #   Fully blocked subcommands:

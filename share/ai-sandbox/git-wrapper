@@ -1,5 +1,5 @@
 #!/bin/bash
-# Git wrapper for claude-sandboxed.
+# Git wrapper for ai-sandbox.
 # Blocks destructive git operations (history rewriting, work discarding, pushes).
 # Allows non-destructive and appending-only operations.
 #
@@ -59,7 +59,7 @@ block() {
 ALLOW_LOCAL="${SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS:-false}"
 if [[ "$ALLOW_LOCAL" == "true" ]]; then
     if [[ "$subcommand" == "push" ]]; then
-        echo "[SECURITY] git push is blocked by claude-sandboxed." >&2
+        echo "[SECURITY] git push is blocked by ai-sandbox." >&2
         echo "[SECURITY] Local-override mode is active: all local operations are allowed; only remote-affecting operations (push) are blocked." >&2
         echo "[SECURITY] Reconsider whether pushing to remote aligns with the user's intent." >&2
         echo "[SECURITY] The sandbox is for autonomous work. Do not ask the user to authorize individual operations; escalate only as a last resort if no in-sandbox approach exists." >&2
@@ -73,7 +73,7 @@ fi
 # Lines starting with # or empty are skipped. Regex is ERE, matched
 # against "subcommand args..." (global flags stripped). Substring match
 # by default; use ^ and $ to anchor.
-POLICY_FILE="${GIT_POLICY_FILE:-/etc/claude-sandboxed/git-policy.conf}"
+POLICY_FILE="${GIT_POLICY_FILE:-/etc/ai-sandbox/git-policy.conf}"
 if [[ -f "$POLICY_FILE" ]]; then
     # Build command string for regex matching.
     cmd_args="$subcommand"
@@ -103,13 +103,13 @@ fi
 
 case "$subcommand" in
     push|reset|rebase|filter-branch|filter-repo|clean|config|commit-tree|update-ref|replace|fast-import|prune|symbolic-ref)
-        block "git $subcommand is blocked by claude-sandboxed."
+        block "git $subcommand is blocked by ai-sandbox."
         ;;
     reflog)
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 expire|delete)
-                    block "git reflog ${!j} is blocked by claude-sandboxed."
+                    block "git reflog ${!j} is blocked by ai-sandbox."
                     ;;
             esac
         done
@@ -118,7 +118,7 @@ case "$subcommand" in
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 remove|prune)
-                    block "git notes ${!j} is blocked by claude-sandboxed."
+                    block "git notes ${!j} is blocked by ai-sandbox."
                     ;;
             esac
         done
@@ -127,7 +127,7 @@ case "$subcommand" in
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 remove|prune)
-                    block "git worktree ${!j} is blocked by claude-sandboxed."
+                    block "git worktree ${!j} is blocked by ai-sandbox."
                     ;;
             esac
         done
@@ -136,7 +136,7 @@ case "$subcommand" in
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 --amend|--reset-author)
-                    block "git commit ${!j} is blocked by claude-sandboxed."
+                    block "git commit ${!j} is blocked by ai-sandbox."
                     ;;
             esac
         done
@@ -158,7 +158,7 @@ case "$subcommand" in
             esac
         done
         if $has_force; then
-            block "git tag --force is blocked by claude-sandboxed."
+            block "git tag --force is blocked by ai-sandbox."
         fi
         ;;
     branch)
@@ -183,14 +183,14 @@ case "$subcommand" in
             esac
         done
         if $has_delete && $has_force; then
-            block "git branch --delete --force is blocked by claude-sandboxed."
+            block "git branch --delete --force is blocked by ai-sandbox."
         fi
         ;;
     stash)
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 drop|clear)
-                    block "git stash ${!j} is blocked by claude-sandboxed."
+                    block "git stash ${!j} is blocked by ai-sandbox."
                     ;;
             esac
         done
@@ -200,14 +200,14 @@ case "$subcommand" in
             arg="${!j}"
             case "$arg" in
                 --force)
-                    block "git checkout $arg is blocked by claude-sandboxed."
+                    block "git checkout $arg is blocked by ai-sandbox."
                     ;;
                 --)
-                    block "git checkout -- <pathspec> is blocked by claude-sandboxed."
+                    block "git checkout -- <pathspec> is blocked by ai-sandbox."
                     ;;
                 -[!-]*)
                     if [[ "$arg" == *[Bf]* ]]; then
-                        block "git checkout $arg is blocked by claude-sandboxed."
+                        block "git checkout $arg is blocked by ai-sandbox."
                     fi
                     ;;
             esac
@@ -218,11 +218,11 @@ case "$subcommand" in
             arg="${!j}"
             case "$arg" in
                 --worktree)
-                    block "git restore $arg is blocked by claude-sandboxed."
+                    block "git restore $arg is blocked by ai-sandbox."
                     ;;
                 -[!-]*)
                     if [[ "$arg" == *W* ]]; then
-                        block "git restore $arg is blocked by claude-sandboxed."
+                        block "git restore $arg is blocked by ai-sandbox."
                     fi
                     ;;
             esac
@@ -233,11 +233,11 @@ case "$subcommand" in
             arg="${!j}"
             case "$arg" in
                 --dis*)
-                    block "git switch $arg is blocked by claude-sandboxed."
+                    block "git switch $arg is blocked by ai-sandbox."
                     ;;
                 -[!-]*)
                     if [[ "$arg" == *C* ]]; then
-                        block "git switch $arg is blocked by claude-sandboxed."
+                        block "git switch $arg is blocked by ai-sandbox."
                     fi
                     ;;
             esac
@@ -253,14 +253,14 @@ case "$subcommand" in
             esac
         done
         if ! $has_cached; then
-            block "git rm without --cached is blocked by claude-sandboxed."
+            block "git rm without --cached is blocked by ai-sandbox."
         fi
         ;;
     gc)
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 --pru*)
-                    block "git gc ${!j} is blocked by claude-sandboxed."
+                    block "git gc ${!j} is blocked by ai-sandbox."
                     ;;
             esac
         done
