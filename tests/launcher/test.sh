@@ -296,12 +296,19 @@ configure_tool opencode
 assert_eq "profile OpenCode: absent host CLI is unpinned" "opencode-ai" "$TOOL_PACKAGE"
 PATH="$OLD_PATH"
 
+# PATH is emptied so detect_host_version finds no `opencode` on PATH. Otherwise
+# an installed host opencode would run during version detection and create
+# ~/.config/opencode & ~/.local/share/opencode inside the fresh HOME, making the
+# "absent" dirs exist and the mounts happen. (Same trick as the version tests.)
 reset_profile_context
 STUB_BIN="$PROFILE_TMP/absent-dirs"
-mkdir -p "$STUB_BIN"
+NO_PATH="$PROFILE_TMP/nopath"
+mkdir -p "$STUB_BIN" "$NO_PATH"
 HOME="$PROFILE_TMP/empty-host-home"
+PATH="$NO_PATH"
 configure_tool opencode
 assert_eq "profile OpenCode: absent host dirs are not mounted" "0" "${#TOOL_VOLUME_ARGS[@]}"
+PATH="$OLD_PATH"
 
 run_captured_launcher() {
     local capture_dir="$1"
