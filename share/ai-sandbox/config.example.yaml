@@ -96,8 +96,10 @@ mounts:
   #
   # Automatic mount detection (only triggers when the situation exists):
   #   git_worktree: when the workspace is a linked git worktree or submodule,
-  #     mount the common git dir (its ".git" file's gitdir target) read-write
-  #     so git behaves as on the host. Default: true.
+  #     mount the worktree's git-dir (its ".git" file's gitdir target) AND the
+  #     COMMON git dir (objects/refs) read-write so git behaves as on the host.
+  #     For a submodule the gitdir target is itself the common dir (single mount).
+  #     Default: true.
   #   symlinks: within the selected tool's mounted config dir, mount read-only
   #     the canonical target of any symlink that resolves OUTSIDE those dirs,
   #     so e.g. a skill shared from elsewhere is usable instead of dangling.

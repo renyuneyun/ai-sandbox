@@ -488,18 +488,47 @@ reset_auto_mounts() {
     EXTRA_MOUNT_VOLUME_ARGS=()
 }
 
-# git worktree: .git is a file pointing at an outside common git dir -> mounted rw
+# git worktree: .git is a *linked worktree* gitdir pointing at <commondir>/worktrees/<name>.
+# Both the COMMON git dir (objects/refs) and the worktree git-dir (HEAD/index) are mounted rw.
 AUTO_DIR="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$AUTO_DIR")
-COMMON_GIT="$AUTO_DIR/common-git"
-mkdir -p "$COMMON_GIT"
+COMMON_GIT="$AUTO_DIR/.git"
+WORKTREE_GIT="$AUTO_DIR/.git/worktrees/feature"
+mkdir -p "$WORKTREE_GIT"
 WORKSPACE_DIR="$AUTO_DIR/linked-wt"
 mkdir -p "$WORKSPACE_DIR"
-printf 'gitdir: %s\n' "$COMMON_GIT" > "$WORKSPACE_DIR/.git"
+printf 'gitdir: %s\n' "$WORKTREE_GIT" > "$WORKSPACE_DIR/.git"
 reset_auto_mounts
 configure_auto_mounts
-assert_eq "auto git: common git dir mounted" "-v" "${EXTRA_MOUNT_VOLUME_ARGS[0]}"
-assert_eq "auto git: common git dir rw (no :ro suffix)" "$COMMON_GIT:$COMMON_GIT" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto git: rw flag first" "-v" "${EXTRA_MOUNT_VOLUME_ARGS[0]}"
+assert_eq "auto git: COMMON git dir mounted rw (objects/refs)" "$COMMON_GIT:$COMMON_GIT" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto git: worktree git-dir mounted rw (HEAD/index)" "$WORKTREE_GIT:$WORKTREE_GIT" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
+
+# git submodule: gitdir points at .git/modules/<name>, which is itself the common dir
+AUTO_SUB="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_SUB")
+SUB_GIT="$AUTO_SUB/.git/modules/sub"
+mkdir -p "$SUB_GIT"
+WORKSPACE_DIR="$AUTO_SUB/subw"
+mkdir -p "$WORKSPACE_DIR"
+printf 'gitdir: %s\n' "$SUB_GIT" > "$WORKSPACE_DIR/.git"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto git: submodule module dir mounted once rw" "$SUB_GIT:$SUB_GIT" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto git: submodule mounts only one dir" "2" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# git relocated/standalone file-gitdir: gitdir points straight at the common dir
+AUTO_DIR_SINGLE="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_DIR_SINGLE")
+COMMON_SINGLE="$AUTO_DIR_SINGLE/common-git"
+mkdir -p "$COMMON_SINGLE"
+WORKSPACE_DIR="$AUTO_DIR_SINGLE/wt"
+mkdir -p "$WORKSPACE_DIR"
+printf 'gitdir: %s\n' "$COMMON_SINGLE" > "$WORKSPACE_DIR/.git"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto git: standalone file-gitdir mounted rw" "$COMMON_SINGLE:$COMMON_SINGLE" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto git: standalone mounts only one dir" "2" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
 
 # git: .git is a real directory (main worktree) -> nothing to mount
 AUTO_DIR_MAIN="$(mktemp -d)"
@@ -510,7 +539,7 @@ reset_auto_mounts
 configure_auto_mounts
 assert_eq "auto git: plain .git dir mounts nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
 
-# git: relative gitdir path resolved against the worktree
+# git: relative gitdir path resolved against the worktree (linked worktree)
 AUTO_DIR_REL="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$AUTO_DIR_REL")
 mkdir -p "$AUTO_DIR_REL/.git/worktrees/foo" "$AUTO_DIR_REL/main"
@@ -518,7 +547,8 @@ printf 'gitdir: ../.git/worktrees/foo\n' > "$AUTO_DIR_REL/main/.git"
 WORKSPACE_DIR="$AUTO_DIR_REL/main"
 reset_auto_mounts
 configure_auto_mounts
-assert_eq "auto git: relative gitdir resolved" "$AUTO_DIR_REL/.git/worktrees/foo:$AUTO_DIR_REL/.git/worktrees/foo" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto git: relative gitdir common dir mounted" "$AUTO_DIR_REL/.git:$AUTO_DIR_REL/.git" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto git: relative gitdir worktree dir mounted" "$AUTO_DIR_REL/.git/worktrees/foo:$AUTO_DIR_REL/.git/worktrees/foo" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
 
 # git: absent target dir (broken gitdir) -> no mount, no crash
 AUTO_DIR_BROKEN="$(mktemp -d)"

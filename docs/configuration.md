@@ -62,7 +62,7 @@ mounts:
     - "~/.config/cc-switch"
     - "~/.cache/npm:/home/user/.cache/npm:rw"
   auto:
-    git_worktree: true          # bool,    default: true - mount a linked worktree/submodule common git dir
+    git_worktree: true          # bool,    default: true - mount a linked worktree/submodule git-dir + common git dir
     symlinks: true              # bool,    default: true - mount config symlink targets that point outside
 
 browser:
@@ -267,7 +267,7 @@ mounts:
     symlinks: true       # default true
 ```
 
-- **`git_worktree`** — When the workspace is a *linked git worktree* or a *git submodule*, its `.git` is a file containing `gitdir: <path>` pointing at the common git dir, normally inside the main worktree / superproject and therefore **outside** the workspace mount. The launcher mounts that common git dir read-write at the same path, so git keeps working (commits write into its object store) exactly as on the host. In a normal main-worktree checkout `.git` is already inside the workspace, so nothing is mounted.
+- **`git_worktree`** — When the workspace is a *linked git worktree* or a *git submodule*, its `.git` is a file containing a `gitdir: <path>` line pointing to the worktree's git-dir, which lives inside the main worktree / superproject and therefore **outside** the workspace mount. That git-dir (`<repo>/.git/worktrees/<name>`, holding the worktree's `HEAD`/index) only sits on top of the real object store, so the launcher also mounts the **common git dir** (`<repo>/.git`, holding `objects`/`refs`/`config`) and the git-dir itself, both read-write at the same paths, so git works (checkout/status/commit) exactly as on the host. For a *submodule* the git-dir (`<repo>/.git/modules/<name>`) is itself the common dir, so just that one path is mounted. In a normal main-worktree checkout `.git` is already inside the workspace, so nothing is mounted.
 - **`symlinks`** — A bind mount of a config dir keeps any symlink it contains as an *unresolved* symlink inside the container, so a skill shared from elsewhere (`~/code/myskill` not under `~/.claude`) would be a dangling link. The launcher scans the selected tool's mounted config dir(s) (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode` — only those whose passthrough is enabled) for symlinks whose canonical target lies outside those roots, and mounts each such target read-only at its own path so the symlink resolves as on the host.
 
 Environment overrides follow normal precedence: `SANDBOX_AUTO_GIT_WORKTREE` and `SANDBOX_AUTO_SYMLINKS`. The master `mounts.enabled` / `SANDBOX_EXTRA_MOUNTS_ENABLED` switch disables **all** extra and auto mounts.

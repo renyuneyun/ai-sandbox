@@ -326,10 +326,18 @@ _auto_add_mount() {
 }
 
 # Git worktree / submodule auto-detect. A linked worktree (or submodule) has
-# `.git` as a FILE containing "gitdir: <path>" that points at the common git
-# dir, normally inside the main worktree / superproject and therefore OUTSIDE
-# the workspace mount. Mount that common git dir read-write (git writes commits
-# into its object store) so git behaves in the sandbox exactly as on the host.
+# `.git` as a FILE containing a "gitdir: <path>" line. That path is the
+# git-dir for the worktree and lives OUTSIDE the workspace mount, in the main
+# repository (or superproject). Mount the git-dir and the COMMON git dir (where
+# objects/refs actually live) read-write so git behaves exactly as on the host.
+#
+# gitdir layout (gitrepository-layout):
+#   - Linked worktree: gitdir = <commondir>/worktrees/<name>, e.g.
+#     /repo/.git/worktrees/feat. The COMMON dir is /repo/.git (the parent of
+#     the worktrees/ directory); it holds objects, refs, config.
+#   - Submodule:       gitdir = <superproject>/.git/modules/<name>. The module
+#     dir is BOTH the git-dir and the common dir (no worktrees/ layer).
+# A plain main-worktree checkout keeps `.git` as a real directory -> no-op.
 detect_git_worktree_mount() {
   local gitfile="$WORKSPACE_DIR/.git"
   [[ -f "$gitfile" ]] || return 0
@@ -344,7 +352,22 @@ detect_git_worktree_mount() {
   [[ "$target" == /* ]] || target="$WORKSPACE_DIR/$target"
   target="$(canonicalize "$target")"
   [[ -d "$target" ]] || return 0
-  _auto_add_mount "$target" "$target" ""
+
+  # The gitdir target is the worktree git-dir. Derive the common dir: for a
+  # linked worktree the target sits under <commondir>/worktrees/<name>, so the
+  # common dir is its grandparent; otherwise (submodule / relocated repo) the
+  # target is already the common dir.
+  local common="$target"
+  if [[ "$(basename "$(dirname "$target")")" == "worktrees" ]]; then
+    common="$(dirname "$(dirname "$target")")"
+  fi
+  common="$(canonicalize "$common")"
+  [[ -d "$common" ]] || return 0
+
+  _auto_add_mount "$common" "$common" ""
+  if [[ "$target" != "$common" ]]; then
+    _auto_add_mount "$target" "$target" ""
+  fi
   return 0
 }
 
