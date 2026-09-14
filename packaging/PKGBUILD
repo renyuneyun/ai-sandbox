@@ -1,6 +1,6 @@
 # Maintainer: renyuneyun (Rui Zhao) <email@ryey.icu>
 pkgname=ai-sandbox
-pkgver=0.6.1
+pkgver=0.6.2
 pkgrel=1
 pkgdesc="Sandboxed coding-agent runtime (Claude Code, Codex, OpenCode) with git push protection"
 arch=('any')
