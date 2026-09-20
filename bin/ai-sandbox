@@ -54,8 +54,83 @@ resolve_list() {  # ENV_NAME YQ_PATH
 }
 
 launcher_error() {
+  if [[ -n "$PROGRESS_ACTIVE" ]]; then
+    progress_stop
+  fi
   echo "ai-sandbox: $*" >&2
   return 2
+}
+
+# --- Startup progress ---
+# One-line progress display on stderr covering the whole "prepare" phase
+# (config resolution, host version detection, mount detection, tool package
+# warm-up). On a TTY the line is redrawn in place and fully erased when
+# stopped; without a TTY (scripts, CI) it degrades to one static line per
+# phase. Disabled entirely via SANDBOX_PROGRESS=false / progress.enabled: false.
+# These functions must stay outside the main guard (source-level tests).
+PROGRESS_MSG=""
+PROGRESS_ACTIVE=""
+PROGRESS_PID=""
+
+# Start (or restart with a new message) the progress line for one phase.
+# Idempotent: calling it while a spinner runs stops the previous one first
+# (phase transitions and warn_msg resumes never stack spinner processes).
+# Safe without a TTY: a static line is printed once and nothing runs in the
+# background (PROGRESS_ACTIVE stays empty).
+progress_start() {  # MESSAGE
+  [[ "${SANDBOX_PROGRESS:-true}" == "true" ]] || return 0
+  if [[ -n "$PROGRESS_ACTIVE" ]]; then
+    progress_stop
+  fi
+  PROGRESS_MSG="$1"
+  if [[ -t 2 ]]; then
+    PROGRESS_ACTIVE=true
+    printf '\033[?25l' >&2
+    (
+      case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *UTF-8*|*utf8*) frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏') ;;
+        *) frames=('-' '\' '|' '/') ;;
+      esac
+      i=0
+      start=$SECONDS
+      while :; do
+        printf '\r\033[K%s ai-sandbox: %s... %ss' "${frames[i]}" "$PROGRESS_MSG" "$((SECONDS - start))" >&2
+        i=$(( (i + 1) % ${#frames[@]} ))
+        sleep 0.1
+      done
+    ) &
+    PROGRESS_PID=$!
+  else
+    printf 'ai-sandbox: %s...\n' "$PROGRESS_MSG" >&2
+  fi
+  return 0
+}
+
+# Stop the progress line and restore the terminal (clears the line, shows the
+# cursor). No-op when nothing is running or progress is disabled.
+progress_stop() {
+  [[ -n "$PROGRESS_ACTIVE" ]] || return 0
+  PROGRESS_ACTIVE=""
+  kill "$PROGRESS_PID" 2>/dev/null || true
+  wait "$PROGRESS_PID" 2>/dev/null || true
+  PROGRESS_PID=""
+  printf '\r\033[K\033[?25h' >&2
+  return 0
+}
+
+# Print a warning without garbling an active spinner: suspend the progress
+# line, print, then resume with the same phase message. Warnings print even
+# when progress is disabled.
+warn_msg() {  # MESSAGE...
+  local active="$PROGRESS_ACTIVE"
+  if [[ -n "$active" ]]; then
+    progress_stop
+  fi
+  printf 'ai-sandbox: %s\n' "$*" >&2
+  if [[ -n "$active" ]]; then
+    progress_start "$PROGRESS_MSG"
+  fi
+  return 0
 }
 
 # Best-effort reachability check for the host-side Playwright MCP endpoint.
@@ -285,7 +360,7 @@ configure_extra_mounts() {
     host="$(expand_home "$host")"
     cont="$(expand_home "$cont")"
     if [[ -z "$host" || -z "$cont" ]]; then
-      echo "ai-sandbox: skipping invalid extra mount spec '$spec'" >&2
+      warn_msg "skipping invalid extra mount spec '$spec'"
       continue
     fi
 
@@ -495,6 +570,23 @@ WORKSPACE_CONFIG="$WORKSPACE_DIR/.ai-sandbox.yaml"
 WORKSPACE_CONFIG_VALID=false; check_config "$WORKSPACE_CONFIG" && WORKSPACE_CONFIG_VALID=true
 USER_CONFIG_VALID=false;       check_config "$USER_CONFIG"     && USER_CONFIG_VALID=true
 
+# Startup progress display (env var > workspace config > user config > true).
+# Resolved before the first progress_start so every later prepare-phase step —
+# config resolution, host version detection, mount detection, tool package
+# warm-up — is covered by one progress line instead of apparent silence.
+SANDBOX_PROGRESS="$(resolve SANDBOX_PROGRESS .progress.enabled true)"
+
+# Generated temp-file placeholders plus the shared exit trap, installed before
+# the first progress_start so ANY exit path (a set -e failure or SIGINT during
+# the prepare phase) stops the spinner and restores the terminal. The rm
+# targets are filled in later; the if-guards keep the trap from changing the
+# exit status when nothing needs cleaning.
+POLICY_FILE=""
+MCP_CONFIG_FILE=""
+trap 'progress_stop; if [[ -n "$POLICY_FILE" ]]; then rm -f -- "$POLICY_FILE"; fi; if [[ -n "$MCP_CONFIG_FILE" ]]; then rm -f -- "$MCP_CONFIG_FILE"; fi' EXIT
+
+progress_start "Preparing sandbox"
+
 # User identity mirrored into the container.
 # Precedence: env var > workspace config > user config > default.
 export SANDBOX_UID="$(resolve SANDBOX_UID .sandbox.uid "$(id -u)")"
@@ -587,7 +679,6 @@ SANDBOX_GIT_POLICY_BLOCK="$(resolve_list SANDBOX_GIT_POLICY_BLOCK .git.policy.bl
 SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS="$(resolve_allow_local "$CLI_ALLOW_LOCAL_GIT")"
 
 GIT_POLICY_VOLUME_ARGS=()
-POLICY_FILE=""
 if [[ -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ]]; then
     POLICY_FILE="$(mktemp)"
     {
@@ -608,7 +699,7 @@ fi
 # Warn when local-override is on but user policy lists are also set (they'll be ignored).
 if [[ "$SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS" == "true" && \
       ( -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ) ]]; then
-    echo "ai-sandbox: git.allow_local_operations is enabled; git.policy.allow/block rules will be ignored." >&2
+    warn_msg "git.allow_local_operations is enabled; git.policy.allow/block rules will be ignored."
 fi
 
 # --- Host-side browser service (Playwright MCP) ---
@@ -627,7 +718,6 @@ SANDBOX_BROWSER_MCP_URL="$(resolve SANDBOX_BROWSER_MCP_URL .browser.mcp_url "htt
 
 BROWSER_ENV_ARGS=()
 BROWSER_VOLUME_ARGS=()
-MCP_CONFIG_FILE=""
 if [[ "$SANDBOX_BROWSER_ENABLED" == "true" ]]; then
     BROWSER_ENV_ARGS+=(-e PLAYWRIGHT_MCP_URL="$SANDBOX_BROWSER_MCP_URL")
     MCP_CONFIG_FILE="$(mktemp)"
@@ -650,16 +740,36 @@ EOF
     fi
     # Hint how to start the on-host browser service when it is not reachable.
     if ! browser_endpoint_reachable "$SANDBOX_BROWSER_MCP_URL"; then
-        echo "ai-sandbox: browser MCP endpoint $SANDBOX_BROWSER_MCP_URL is not reachable." >&2
-        echo "ai-sandbox: to use the on-host browser, start the service with:" >&2
-        echo "ai-sandbox:   systemctl --user enable --now ai-sandbox-playwright" >&2
+        warn_msg "browser MCP endpoint $SANDBOX_BROWSER_MCP_URL is not reachable."
+        warn_msg "to use the on-host browser, start the service with:"
+        warn_msg "  systemctl --user enable --now ai-sandbox-playwright"
     fi
 fi
 
-# Single shared cleanup trap removes the generated git-policy and MCP config
-# files from /tmp on exit (each is only removed if it was actually created).
-if [[ -n "$POLICY_FILE" || -n "$MCP_CONFIG_FILE" ]]; then
-    trap 'rm -f -- "$POLICY_FILE" "$MCP_CONFIG_FILE"' EXIT
+# Cache warm-up: fetch the selected tool package non-interactively so the
+# (potentially slow) npx download happens under the progress spinner instead
+# of silently after the interactive run starts. The npx cache lives in the
+# persistent ai-agent-home volume, so the interactive run starts from cache.
+# Best-effort: a failed warm-up (e.g. offline) is ignored; the error surfaces
+# again in the interactive run exactly as it would have before. Skipped when
+# progress is disabled (SANDBOX_PROGRESS=false restores the legacy behavior).
+if [[ "$SANDBOX_PROGRESS" == "true" ]]; then
+  progress_start "Fetching tool package (first launch may download it)"
+  warm_rc=0
+  docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
+    --rm \
+    -T \
+    -e HOME="${SANDBOX_HOME}" \
+    "${PROXY_ENV_ARGS[@]}" \
+    ai-agent \
+    npx --yes "$TOOL_PACKAGE" --version >/dev/null 2>&1 || warm_rc=$?
+  progress_stop
+  # An interrupted warm-up (SIGINT, docker reports 130) must abort the launch
+  # instead of falling through to the interactive session.
+  if (( warm_rc == 130 )); then
+    exit 130
+  fi
+  echo "ai-sandbox: launching $SELECTED_TOOL..." >&2
 fi
 
 # Run the selected coding agent in a one-shot container.

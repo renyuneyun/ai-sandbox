@@ -7,10 +7,11 @@
 3. It selects a profile using CLI `--tool` > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude.
 4. The profile chooses its npm package, host-derived or pinned version, autonomy flag, optional API key, and read/write config binds.
 5. The launcher assembles conditional read-only git-config binds, identity overrides, and an optional generated read-only policy bind.
-6. It runs `docker compose run --rm`, starting a fresh `ai-agent` container in the per-UID Compose project.
-7. The root entrypoint creates the mirrored user/group when needed, configures push protection, drops privileges, and execs the selected coding agent.
-8. The selected coding agent works in the bind-mounted workspace under the git wrapper policy. The container is removed on exit; named volumes persist.
-9. When enabled and applicable, a one-shot `cleanup` container removes empty mount-point parent stubs; the generated policy file is removed by the launcher exit trap.
+6. When startup progress is enabled (the default), it first runs a short non-interactive warm-up container (`npx <package> --version`, output discarded) that fetches the tool package into the npm cache inside the `ai-agent-home` volume, while a single self-erasing progress line on stderr covers the whole prepare phase (config resolution, mount detection, warm-up). A failed warm-up is ignored; the interactive run surfaces the error as before.
+7. It runs `docker compose run --rm`, starting a fresh `ai-agent` container in the per-UID Compose project; with the cache warm, `npx` starts the selected agent from cache.
+8. The root entrypoint creates the mirrored user/group when needed, configures push protection, drops privileges, and execs the selected coding agent.
+9. The selected coding agent works in the bind-mounted workspace under the git wrapper policy. The container is removed on exit; named volumes persist.
+10. When enabled and applicable, a one-shot `cleanup` container removes empty mount-point parent stubs; the generated policy file is removed by the launcher exit trap.
 
 Claude receives `--dangerously-skip-permissions`; Codex receives `--dangerously-bypass-approvals-and-sandbox`. The container limits the blast radius while the selected coding agent operates autonomously.
 

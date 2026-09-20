@@ -130,6 +130,23 @@ browser:
   # Default: http://localhost:8931/mcp
   # mcp_url: http://localhost:8931/mcp
 
+progress:
+  # Startup progress display. While the sandbox prepares (config resolution,
+  # mount detection, tool package warm-up), the launcher shows a single
+  # self-erasing progress line (spinner with elapsed time on a terminal, one
+  # static line per phase otherwise) instead of falling silent after the
+  # docker compose messages. Enabling it also runs a short non-interactive
+  # cache warm-up container first, so the (potentially slow) tool package
+  # download happens under the progress line instead of silently inside the
+  # interactive session. The warm-up container runs on every enabled launch
+  # (a cached package makes it quick, but it still costs one extra short-lived
+  # container start); the download itself only happens on first launch or when
+  # the pinned version changes. Set false to restore the fully silent legacy
+  # behavior (no progress line, no warm-up container).
+  # Env override: SANDBOX_PROGRESS.
+  # Default: true.
+  # enabled: true
+
 sandbox:
   # uid: 1000          # default: $(id -u)
   # gid: 1000          # default: $(id -g)

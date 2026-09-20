@@ -69,6 +69,9 @@ browser:
   enabled: true                 # bool,    default: false - drive a visible host browser
   mcp_url: http://localhost:8931/mcp  # string, default: http://localhost:8931/mcp
 
+progress:
+  enabled: true                 # bool,    default: true - startup progress line + tool package warm-up
+
 sandbox:
   uid: 1000          # integer, default: $(id -u)
   gid: 1000          # integer, default: $(id -g)
@@ -315,6 +318,23 @@ The endpoint is bound to `127.0.0.1` on the host. Because the container uses hos
 - The browser is a real resource on the host: the agent is granted full control of pages it is given, so only enable it where you trust the agent's browser activity.
 - Requires the `playwright-mcp` package (AUR) and `node`; a usable host browser (chromium/chrome preferred, firefox fallback) is preferred but not strictly required (Playwright's own chromium is auto-installed as a fallback). The launcher never downloads a Playwright browser build when a valid system browser is present. See the launcher source for details.
 - The launcher does a lightweight reachability check when `browser.enabled` is true: if the endpoint is not up, it prints the one-liner to start the unit (`systemctl --user enable --now ai-sandbox-playwright`) to stderr so the user is never left guessing.
+
+## Startup progress
+
+The launcher shows a single self-erasing progress line (a spinner with elapsed time on a terminal, one static `ai-sandbox: ...` line per phase otherwise) covering the whole prepare phase: config resolution, host version detection, mount detection, and a non-interactive tool package warm-up run. The warm-up fetches the selected tool package into the npm cache inside the persistent `ai-agent-home` volume, so the (potentially slow, especially first-launch) download happens under the progress line instead of silently after the interactive session starts. Warnings and errors suspend the line, print cleanly, and resume it; the line is fully erased once the tool launches.
+
+The warm-up container runs on **every** enabled launch — with a cached package it is quick, but it still costs one extra short-lived container start (roughly a second); the actual package download only happens on first launch or when the pinned version changes.
+
+Set `progress.enabled: false` (or `SANDBOX_PROGRESS=false`) to restore the fully silent legacy behavior: no progress line and no warm-up container. In non-interactive contexts (pipes, CI) the spinner automatically degrades to static lines; set the knob to `false` there if even those are unwanted.
+
+```yaml
+progress:
+  enabled: true   # default: true
+```
+
+| Knob | Env override | Default |
+|---|---|---|
+| `progress.enabled` | `SANDBOX_PROGRESS` | `true` |
 
 ## Cleanup
 
