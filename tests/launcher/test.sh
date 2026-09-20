@@ -26,6 +26,7 @@ assert_eq() {
 
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
 unset http_proxy https_proxy all_proxy no_proxy
+unset SANDBOX_PROGRESS
 
 if declare -F configure_proxy_env >/dev/null; then
     SANDBOX_PROXY_ENV_PASSTHROUGH=true
@@ -313,9 +314,18 @@ PATH="$OLD_PATH"
 run_captured_launcher() {
     local capture_dir="$1"
     shift
+    local LAUNCHER_RC=0
     mkdir -p "$capture_dir/bin" "$capture_dir/home"
-    printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "$DOCKER_CAPTURE"\n' > "$capture_dir/bin/docker"
-    chmod +x "$capture_dir/bin/docker"
+    # The launcher may invoke docker more than once (cache warm-up run +
+    # interactive run). Each invocation is captured in a numbered file;
+    # `docker.args` always mirrors the LAST invocation (the interactive one),
+    # which is what the pre-existing assertions read. Tests that need a
+    # custom stub (warm-up failure / SIGINT) may pre-create bin/docker; the
+    # default capturing stub is only installed when none exists yet.
+    if [[ ! -x "$capture_dir/bin/docker" ]]; then
+        printf '#!/bin/sh\nn=$(($(cat "$DOCKER_CAPTURE.count" 2>/dev/null || echo 0) + 1))\nprintf "%%s\\0" "$@" > "$DOCKER_CAPTURE.$n"\necho "$n" > "$DOCKER_CAPTURE.count"\ncp "$DOCKER_CAPTURE.$n" "$DOCKER_CAPTURE"\n' > "$capture_dir/bin/docker"
+        chmod +x "$capture_dir/bin/docker"
+    fi
     DOCKER_CAPTURE="$capture_dir/docker.args" \
     HOME="$capture_dir/home" \
     XDG_CONFIG_HOME="$capture_dir/home/.config" \
@@ -333,8 +343,9 @@ run_captured_launcher() {
     SANDBOX_PROXY_ENV_PASSTHROUGH="${TEST_PROXY_PASSTHROUGH:-true}" \
     AI_SANDBOX_DIR="$SCRIPT_DIR/../../share/ai-sandbox" \
     PATH="$capture_dir/bin:$PATH" \
-      bash "$LAUNCHER" "$@"
+      bash "$LAUNCHER" "$@" >"$capture_dir/launcher.stdout" 2>"$capture_dir/launcher.stderr" || LAUNCHER_RC=$?
     mapfile -d '' -t CAPTURED_DOCKER_ARGS < "$capture_dir/docker.args"
+    return "$LAUNCHER_RC"
 }
 
 CAPTURE_DIR="$(mktemp -d)"
@@ -813,6 +824,233 @@ assert_rejected_before_docker "integration: missing tool rejected" "--tool requi
 assert_rejected_before_docker "integration: unknown option rejected" "unsupported option" --bad
 assert_rejected_before_docker "integration: multiple workspaces rejected" "at most one workspace" one two
 assert_rejected_before_docker "integration: missing workspace rejected" "workspace does not exist" /definitely/not/a/workspace
+
+# --- Startup progress (spinner + cache warm-up) tests ---
+
+# progress_* and warn_msg must stay defined outside the main guard so tests can
+# source the launcher and call them directly (same contract as resolve()).
+if declare -F progress_start >/dev/null && \
+   declare -F progress_stop >/dev/null && \
+   declare -F warn_msg >/dev/null; then
+    ok "progress: functions exist outside main guard"
+else
+    bad "progress: functions exist outside main guard"
+fi
+
+PROGRESS_CAP="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$PROGRESS_CAP")
+
+SANDBOX_PROGRESS=false
+out=$(progress_start "Preparing sandbox" 2>&1)
+assert_eq "progress: disabled start prints nothing" "" "$out"
+out=$(progress_stop 2>&1)
+assert_eq "progress: disabled stop prints nothing" "" "$out"
+assert_eq "progress: disabled start is not active" "" "${PROGRESS_ACTIVE:-}"
+
+SANDBOX_PROGRESS=true
+out=$(progress_start "Preparing sandbox" 2>&1)
+assert_eq "progress: non-TTY start prints static line" "ai-sandbox: Preparing sandbox..." "$out"
+assert_eq "progress: non-TTY start is not active" "" "${PROGRESS_ACTIVE:-}"
+if [[ "$out" != *$'\033'* ]]; then
+    ok "progress: non-TTY output has no ANSI escapes"
+else
+    bad "progress: non-TTY output has no ANSI escapes ($out)"
+fi
+out=$(progress_stop 2>&1)
+assert_eq "progress: non-TTY stop prints nothing" "" "$out"
+
+out=$(progress_stop 2>&1)
+assert_eq "progress: stop without start is silent" "" "$out"
+
+SANDBOX_PROGRESS=false
+out=$(warn_msg "something is off" 2>&1)
+assert_eq "warn: prints even when progress disabled" "ai-sandbox: something is off" "$out"
+SANDBOX_PROGRESS=true
+out=$(warn_msg "something is off" 2>&1)
+assert_eq "warn: non-TTY passthrough with prefix" "ai-sandbox: something is off" "$out"
+unset SANDBOX_PROGRESS
+
+# TTY branch: the spinner redraws one line, hides the cursor at start and
+# restores it at stop. Verified through a real pty via script(1) when present.
+if command -v script >/dev/null 2>&1; then
+    cat > "$PROGRESS_CAP/pty.sh" <<EOF
+source "$LAUNCHER"
+SANDBOX_PROGRESS=true
+progress_start "Preparing sandbox"
+sleep 0.4
+progress_stop
+printf 'DONE\n'
+EOF
+    if script -qec true /dev/null >/dev/null 2>&1; then
+        pty_out=$(script -qec "bash $PROGRESS_CAP/pty.sh" /dev/null 2>&1)
+    else
+        pty_out=$(script -q /dev/null bash "$PROGRESS_CAP/pty.sh" 2>&1)
+    fi
+    [[ "$pty_out" == *$'\033[?25l'* ]] &&
+        ok "progress: TTY hides cursor at start" ||
+        bad "progress: TTY hides cursor at start"
+    [[ "$pty_out" == *"Preparing sandbox"* ]] &&
+        ok "progress: TTY shows phase message" ||
+        bad "progress: TTY shows phase message"
+    [[ "$pty_out" == *$'\033[K'* ]] &&
+        ok "progress: TTY clears line at stop" ||
+        bad "progress: TTY clears line at stop"
+    [[ "$pty_out" == *$'\033[?25h'* ]] &&
+        ok "progress: TTY restores cursor at stop" ||
+        bad "progress: TTY restores cursor at stop"
+    [[ "$pty_out" == *DONE* ]] &&
+        ok "progress: TTY snippet completes cleanly" ||
+        bad "progress: TTY snippet completes cleanly"
+
+    # Regression: consecutive progress_start calls (phase transitions) must
+    # restart the spinner, never stack a second one that survives progress_stop.
+    cat > "$PROGRESS_CAP/pty2.sh" <<EOF
+source "$LAUNCHER"
+SANDBOX_PROGRESS=true
+progress_start "Phase one"
+pid1="\$PROGRESS_PID"
+sleep 0.2
+progress_start "Phase two"
+pid2="\$PROGRESS_PID"
+if [ "\$pid1" = "\$pid2" ]; then echo "PID-REUSED"; fi
+if kill -0 "\$pid1" 2>/dev/null; then echo "STALE-FIRST"; else echo "FIRST-STOPPED"; fi
+sleep 0.2
+progress_stop
+if kill -0 "\$pid2" 2>/dev/null; then echo "STALE-SECOND"; else echo "SECOND-STOPPED"; fi
+printf 'DONE2\n'
+EOF
+    if script -qec true /dev/null >/dev/null 2>&1; then
+        pty2_out=$(script -qec "bash $PROGRESS_CAP/pty2.sh" /dev/null 2>&1)
+    else
+        pty2_out=$(script -q /dev/null bash "$PROGRESS_CAP/pty2.sh" 2>&1)
+    fi
+    [[ "$pty2_out" != *PID-REUSED* ]] &&
+        ok "progress: TTY restart spawns a new spinner process" ||
+        bad "progress: TTY restart spawns a new spinner process"
+    [[ "$pty2_out" == *FIRST-STOPPED* ]] &&
+        ok "progress: TTY restart stops the previous spinner" ||
+        bad "progress: TTY restart stops the previous spinner"
+    [[ "$pty2_out" == *SECOND-STOPPED* ]] &&
+        ok "progress: TTY stop kills the active spinner" ||
+        bad "progress: TTY stop kills the active spinner"
+    [[ "$pty2_out" != *STALE* && "$pty2_out" == *DONE2* ]] &&
+        ok "progress: TTY no stale spinner survives" ||
+        bad "progress: TTY no stale spinner survives"
+else
+    echo "SKIP: script(1) not available; skipping TTY spinner tests"
+fi
+
+# --- Cache warm-up integration ---
+# With progress enabled (the default) the launcher performs one non-interactive
+# warm-up invocation (npx <pkg> --version) before the interactive run so the
+# tool download happens under the spinner instead of silently in the TUI.
+
+CAPTURE_DIR_WARM="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_WARM")
+run_captured_launcher "$CAPTURE_DIR_WARM" --tool codex "$SCRIPT_DIR/../.."
+assert_eq "warm-up: two docker invocations by default" "2" "$(cat "$CAPTURE_DIR_WARM/docker.args.count")"
+mapfile -d '' -t WARMUP_ARGS < "$CAPTURE_DIR_WARM/docker.args.1"
+WARMUP_JOINED="$(printf '<%s>' "${WARMUP_ARGS[@]}")"
+INTERACTIVE_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$WARMUP_JOINED" == *"<run>"* && "$WARMUP_JOINED" == *"<-T>"* ]] &&
+    ok "warm-up: run with -T (no TTY allocation)" ||
+    bad "warm-up: run with -T (no TTY allocation) ($WARMUP_JOINED)"
+[[ "$WARMUP_JOINED" == *"<npx><--yes><@openai/codex@integration-test><--version>"* ]] &&
+    ok "warm-up: fetches package with --version" ||
+    bad "warm-up: fetches package with --version ($WARMUP_JOINED)"
+[[ "$WARMUP_JOINED" == *"<-e><HOME=/home/tester>"* ]] &&
+    ok "warm-up: HOME points at persistent home volume" ||
+    bad "warm-up: HOME points at persistent home volume ($WARMUP_JOINED)"
+[[ "$WARMUP_JOINED" == *"<-p><ai-sandbox-1234>"* ]] &&
+    ok "warm-up: same compose project namespace" ||
+    bad "warm-up: same compose project namespace ($WARMUP_JOINED)"
+[[ "$WARMUP_JOINED" == *"<-f>"*"/share/ai-sandbox/docker-compose.yml>"* ]] &&
+    ok "warm-up: same compose file" ||
+    bad "warm-up: same compose file ($WARMUP_JOINED)"
+[[ "$INTERACTIVE_JOINED" != *"<--version>"* ]] &&
+    ok "warm-up: interactive run unaffected" ||
+    bad "warm-up: interactive run unaffected ($INTERACTIVE_JOINED)"
+[[ "$INTERACTIVE_JOINED" == *"<--dangerously-bypass-approvals-and-sandbox>"* ]] &&
+    ok "warm-up: interactive args preserved" ||
+    bad "warm-up: interactive args preserved ($INTERACTIVE_JOINED)"
+
+# Warm-up output must be discarded (no npm noise in the launcher's stderr) and
+# a failing warm-up must not abort the launcher.
+CAPTURE_DIR_WARMFAIL="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_WARMFAIL")
+mkdir -p "$CAPTURE_DIR_WARMFAIL/bin"
+cat > "$CAPTURE_DIR_WARMFAIL/bin/docker" <<'EOF'
+#!/bin/sh
+n=$(($(cat "$DOCKER_CAPTURE.count" 2>/dev/null || echo 0) + 1))
+printf '%s\0' "$@" > "$DOCKER_CAPTURE.$n"
+echo "$n" > "$DOCKER_CAPTURE.count"
+cp "$DOCKER_CAPTURE.$n" "$DOCKER_CAPTURE"
+warmup=0
+for a in "$@"; do
+    if [ "$a" = "--version" ]; then warmup=1; fi
+done
+if [ "$warmup" = "1" ]; then
+    echo "WARMUP_STDERR_MARKER" >&2
+    echo "WARMUP_STDOUT_MARKER"
+    exit 1
+fi
+exit 0
+EOF
+chmod +x "$CAPTURE_DIR_WARMFAIL/bin/docker"
+warmfail_code=0
+run_captured_launcher "$CAPTURE_DIR_WARMFAIL" --tool codex "$SCRIPT_DIR/../.." || warmfail_code=$?
+assert_eq "warm-up: failure does not abort launcher" "0" "$warmfail_code"
+assert_eq "warm-up: interactive still invoked after failure" "2" "$(cat "$CAPTURE_DIR_WARMFAIL/docker.args.count")"
+if grep -q "WARMUP_STDERR_MARKER" "$CAPTURE_DIR_WARMFAIL/launcher.stderr"; then
+    bad "warm-up: stderr output is discarded"
+else
+    ok "warm-up: stderr output is discarded"
+fi
+
+# A SIGINT during the warm-up (docker compose reports exit code 130) must
+# abort the launcher, not fall through to the interactive session.
+CAPTURE_DIR_WARMSIG="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_WARMSIG")
+mkdir -p "$CAPTURE_DIR_WARMSIG/bin"
+cat > "$CAPTURE_DIR_WARMSIG/bin/docker" <<'EOF'
+#!/bin/sh
+n=$(($(cat "$DOCKER_CAPTURE.count" 2>/dev/null || echo 0) + 1))
+printf '%s\0' "$@" > "$DOCKER_CAPTURE.$n"
+echo "$n" > "$DOCKER_CAPTURE.count"
+cp "$DOCKER_CAPTURE.$n" "$DOCKER_CAPTURE"
+warmup=0
+for a in "$@"; do
+    if [ "$a" = "--version" ]; then warmup=1; fi
+done
+if [ "$warmup" = "1" ]; then exit 130; fi
+exit 0
+EOF
+chmod +x "$CAPTURE_DIR_WARMSIG/bin/docker"
+warmsig_code=0
+run_captured_launcher "$CAPTURE_DIR_WARMSIG" --tool codex "$SCRIPT_DIR/../.." || warmsig_code=$?
+assert_eq "warm-up: SIGINT aborts launcher" "130" "$warmsig_code"
+assert_eq "warm-up: SIGINT skips interactive run" "1" "$(cat "$CAPTURE_DIR_WARMSIG/docker.args.count")"
+
+# With progress disabled the launcher behaves exactly as before: no warm-up
+# invocation, no progress lines.
+CAPTURE_DIR_NOWARM="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_NOWARM")
+SANDBOX_PROGRESS=false run_captured_launcher "$CAPTURE_DIR_NOWARM" "$SCRIPT_DIR/../.."
+assert_eq "progress: disabled skips warm-up" "1" "$(cat "$CAPTURE_DIR_NOWARM/docker.args.count")"
+
+# Static per-phase lines appear on stderr in non-TTY mode.
+CAPTURE_DIR_STATIC="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_STATIC")
+static_err=$(SANDBOX_PROGRESS=true run_launcher_stderr "$CAPTURE_DIR_STATIC" "$SCRIPT_DIR/../..")
+[[ "$static_err" == *"ai-sandbox: Preparing sandbox..."* ]] &&
+    ok "progress: static prepare line on stderr" ||
+    bad "progress: static prepare line on stderr (got '$static_err')"
+[[ "$static_err" == *"ai-sandbox: Fetching tool package"* ]] &&
+    ok "progress: static fetch line on stderr" ||
+    bad "progress: static fetch line on stderr (got '$static_err')"
+[[ "$static_err" == *"ai-sandbox: launching claude"* ]] &&
+    ok "progress: launching line on stderr" ||
+    bad "progress: launching line on stderr (got '$static_err')"
 
 echo "$pass passed, $fail failed"
 [[ $fail -eq 0 ]]

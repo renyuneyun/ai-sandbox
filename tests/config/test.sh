@@ -849,6 +849,42 @@ USER_CONFIG_VALID=false
 result=$(resolve SANDBOX_PROXY_ENV_PASSTHROUGH .proxy.env_passthrough true)
 [[ "$result" == "true" ]] && ok "resolve: proxy passthrough default true" || bad "resolve: proxy passthrough default (got '$result')"
 
+# --- resolve tests for progress.enabled ---
+
+printf 'progress:\n  enabled: false\n' > "$TMPDIR/progress-workspace.yaml"
+printf 'progress:\n  enabled: false\n' > "$TMPDIR/progress-user.yaml"
+
+WORKSPACE_CONFIG="$TMPDIR/nonexistent.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=false
+unset SANDBOX_PROGRESS
+result=$(resolve SANDBOX_PROGRESS .progress.enabled true)
+[[ "$result" == "true" ]] && ok "resolve: progress.enabled default true" || bad "resolve: progress.enabled default (got '$result')"
+
+WORKSPACE_CONFIG="$TMPDIR/progress-workspace.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=true
+USER_CONFIG_VALID=false
+result=$(resolve SANDBOX_PROGRESS .progress.enabled true)
+[[ "$result" == "false" ]] && ok "resolve: progress.enabled workspace false wins" || bad "resolve: progress.enabled workspace false (got '$result')"
+
+WORKSPACE_CONFIG="$TMPDIR/nonexistent.yaml"
+USER_CONFIG="$TMPDIR/progress-user.yaml"
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=true
+result=$(resolve SANDBOX_PROGRESS .progress.enabled true)
+[[ "$result" == "false" ]] && ok "resolve: progress.enabled user false fills gap" || bad "resolve: progress.enabled user false (got '$result')"
+
+SANDBOX_PROGRESS=true
+WORKSPACE_CONFIG="$TMPDIR/progress-workspace.yaml"
+USER_CONFIG="$TMPDIR/progress-user.yaml"
+WORKSPACE_CONFIG_VALID=true
+USER_CONFIG_VALID=true
+result=$(resolve SANDBOX_PROGRESS .progress.enabled false)
+[[ "$result" == "true" ]] && ok "resolve: progress.enabled env beats config" || bad "resolve: progress.enabled env beats config (got '$result')"
+unset SANDBOX_PROGRESS
+
 echo ""
 echo "Results: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1
