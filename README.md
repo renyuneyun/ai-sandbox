@@ -145,7 +145,7 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
 
 Open items, mostly around the optional host-browser service (`browser.enabled`):
 
-- **No browser auth/session isolation.** The Playwright MCP server binds to `127.0.0.1`, and the sandbox shares the host network, so *any* sandboxed agent can reach `http://127.0.0.1:8931/mcp` and get full control of the browser — including the user's logged-in sites (it intentionally drives the real profile). This is a trust boundary worth hardening for untrusted agents.
+- **No browser auth/session isolation.** The Playwright MCP server binds to `127.0.0.1`, and the sandbox shares the host network, so *any* sandboxed agent can reach `http://localhost:8931/mcp` and get full control of the browser — including the user's logged-in sites (it intentionally drives the real profile). This is a trust boundary worth hardening for untrusted agents.
 - **One shared browser instance across concurrent sessions.** The service holds a single browser; parallel `ai-sandbox` sessions all drive it, so pages/tabs from different agents collide. The `--isolated` option of the MCP server is not wired in.
 - **Codex / OpenCode get no automatic MCP registration.** Only Claude is wired up with `--mcp-config`; for Codex/OpenCode the remote server must be registered manually. So `browser.enabled` is effectively Claude-only as shipped.
 

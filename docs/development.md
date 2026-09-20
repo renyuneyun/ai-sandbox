@@ -57,7 +57,7 @@ Identity, git, proxy, cleanup, policy, browser, mounts, and tool-profile knobs (
 1. **Env var** (`SANDBOX_UID`, etc.) - if set and non-empty.
 2. **Workspace config** (`$WORKSPACE_DIR/.ai-sandbox.yaml`) - if the key is present and non-null.
 3. **User config** (`${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandbox/config.yaml`) - if the key is present and non-null.
-4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty. `SANDBOX_BROWSER_ENABLED`: `false`. `SANDBOX_BROWSER_MCP_URL`: `http://127.0.0.1:8931/mcp`. `SANDBOX_EXTRA_MOUNTS`: empty. `SANDBOX_EXTRA_MOUNTS_ENABLED`: `true`. `SANDBOX_AUTO_GIT_WORKTREE`: `true`. `SANDBOX_AUTO_SYMLINKS`: `true`.
+4. **Default** - identity knobs: `$(id -u)`, `$(id -g)`, `$(id -un)`, `/home/$SANDBOX_USERNAME`. Git identity knobs: `""`, `""`. `SANDBOX_GIT_HOST_CONFIG_PASSTHROUGH`: `true`. `SANDBOX_TOOL`: `claude`. Each tool version uses its host CLI version, or npm's latest if absent. All config/data passthrough toggles: `true`. Claude paths: `$HOME/.claude` and `$HOME/.claude.json`; Codex path: `$HOME/.codex`; OpenCode paths: `$HOME/.config/opencode` and `$HOME/.local/share/opencode`. `SANDBOX_PROXY_ENV_PASSTHROUGH`: `true`. `SANDBOX_CLEANUP`: `true`. `SANDBOX_GIT_POLICY_ALLOW` / `SANDBOX_GIT_POLICY_BLOCK`: empty. `SANDBOX_BROWSER_ENABLED`: `false`. `SANDBOX_BROWSER_MCP_URL`: `http://localhost:8931/mcp` (must use the `localhost` hostname — playwright-mcp rejects `127.0.0.1` Host headers with 403). `SANDBOX_EXTRA_MOUNTS`: empty. `SANDBOX_EXTRA_MOUNTS_ENABLED`: `true`. `SANDBOX_AUTO_GIT_WORKTREE`: `true`. `SANDBOX_AUTO_SYMLINKS`: `true`.
 
 Two bash functions in `bin/ai-sandbox` implement this:
 
@@ -125,7 +125,7 @@ Priority order (first match wins), implemented in `bin/ai-sandbox`:
 38. **Browser disabled (default):** with no browser config, the container has no `PLAYWRIGHT_MCP_URL` env, no `/etc/ai-sandbox/mcp-config.json` mount, and Claude gets no `--mcp-config` arg.
 39. **Browser enabled (Claude):** with `browser.enabled: true`, `PLAYWRIGHT_MCP_URL` is passed, the mcp-config is mounted read-only, and Claude's Docker args include `--mcp-config /etc/ai-sandbox/mcp-config.json`.
 40. **Browser enabled (Codex/OpenCode):** with `browser.enabled: true` and `--tool codex`, `PLAYWRIGHT_MCP_URL` is still passed but no `--mcp-config` arg is added.
-41. **Browser URL override:** with `browser.mcp_url` (or `SANDBOX_BROWSER_MCP_URL`) set, the injected `PLAYWRIGHT_MCP_URL` and the mcp-config `url` both use that value; the default is `http://127.0.0.1:8931/mcp`.
+41. **Browser URL override:** with `browser.mcp_url` (or `SANDBOX_BROWSER_MCP_URL`) set, the injected `PLAYWRIGHT_MCP_URL` and the mcp-config `url` both use that value; the default is `http://localhost:8931/mcp` (`localhost`, not `127.0.0.1` — playwright-mcp rejects `127.0.0.1` Host headers with 403).
 42. **Browser unstarted hint:** with `browser.enabled: true` and a non-reachable endpoint, the launcher prints the `systemctl --user enable --now ai-sandbox-playwright` hint to stderr. With a reachable endpoint (or browser disabled) it does not.
 43. **Extra mount host-only:** with `mounts.extra: ["~/.some-dir"]` pointing at an existing host dir, the dir appears read-only at the same path inside the container (host `/home/<user>/.some-dir` → container `${SANDBOX_HOME}/.some-dir:ro`). Verify with `ls` and attempt a write (should fail).
 44. **Extra mount explicit path and rw:** with `mounts.extra: ["/tmp/x:/opt/x:rw"]`, the container sees `/opt/x` read-write (write succeeds in the sandbox and is visible on the host).
@@ -136,6 +136,7 @@ Priority order (first match wins), implemented in `bin/ai-sandbox`:
 49. **Auto disabled:** with `mounts.auto.git_worktree: false` (or `mounts.enabled: false`), linked-worktree/submodule git dirs are not auto-mounted.
 50. **Browser display detection (Wayland):** with the `ai-sandbox-playwright` unit running on a Wayland session, its startup log reports `using Wayland display: <wl>` and the generated config includes `--ozone-platform=wayland`. On an X11-only or headless box (no `WAYLAND_DISPLAY`/`wayland-0` socket) it reports `using X11 display` and passes no ozone arg.
 51. **Browser bundled-chromium fallback:** with the unit running where no system chromium/firefox validates against the installed Playwright, its startup log reports `using Playwright's own chromium` and auto-installs it on first need (no crash on the first agent `browser_*` call). With a valid system browser it logs `using system chromium/firefox` and makes no install.
+52. **Browser MCP handshake:** with the `ai-sandbox-playwright` service running, `bash tests/browser-mcp/test.sh` passes — the launcher's default URL accepts an MCP `initialize` request with HTTP 200 (a `403 - Access is only allowed at localhost:8931` response means the URL uses a hostname the server rejects, e.g. `127.0.0.1`).
 
 ## Automated tests
 
@@ -152,6 +153,7 @@ Current test suites:
 - `tests/git-wrapper/test.sh` — unit tests for the git wrapper script (policy enforcement, argument parsing). Uses a stubbed real git binary so tests run on the host without Docker.
 - `tests/config/test.sh` — unit tests for config resolution (`check_config`, `resolve`). Sources the launcher directly. Requires `yq` on `PATH`; skipped if `yq` is not installed.
 - `tests/launcher/test.sh` — unit tests for launcher argument parsing, tool selection, version detection, proxy environment collection, final Docker command assembly, and Claude/Codex/OpenCode profile configuration.
+- `tests/browser-mcp/test.sh` — MCP `initialize` handshake smoke test against the launcher's default browser MCP URL (skipped when the host service is not running or `curl` is absent), plus stubbed unit tests for the host-side `share/ai-sandbox/playwright-mcp` wrapper (browser probing/selection, generated config JSON, Wayland/headless flag handling).
 
 To add a new test suite, create `tests/<component>/test.sh` and make it executable. The runner picks it up automatically. A test script should print `PASS:` / `FAIL:` lines and exit non-zero on any failure.
 

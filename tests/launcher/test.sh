@@ -642,7 +642,7 @@ PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BROWSER_CODEX")
 SANDBOX_BROWSER_ENABLED=true \
 run_captured_launcher "$CAPTURE_DIR_BROWSER_CODEX" --tool codex "$SCRIPT_DIR/../.."
 CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
-[[ "$CAPTURED_JOINED" == *"<-e><PLAYWRIGHT_MCP_URL=http://127.0.0.1:8931/mcp>"* ]] &&
+[[ "$CAPTURED_JOINED" == *"<-e><PLAYWRIGHT_MCP_URL=http://localhost:8931/mcp>"* ]] &&
   ok "browser: PLAYWRIGHT_MCP_URL passed for codex too" ||
   bad "browser: PLAYWRIGHT_MCP_URL passed for codex too ($CAPTURED_JOINED)"
 [[ "$CAPTURED_JOINED" != *"<--mcp-config>"* ]] &&

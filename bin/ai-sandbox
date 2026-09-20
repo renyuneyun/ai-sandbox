@@ -615,12 +615,15 @@ fi
 # When enabled, the sandboxed agent can drive a browser that runs ON THE HOST
 # (visible to the user) by connecting to a remote HTTP MCP server started by a
 # systemd user service). Host networking makes
-# the host-bound endpoint reachable from inside at 127.0.0.1. The launcher hands
+# the host-bound endpoint reachable from inside. The URL must use the
+# `localhost` hostname: the playwright-mcp HTTP transport validates the Host
+# header against the bound address normalized to localhost, and rejects
+# `127.0.0.1` requests with 403. The launcher hands
 # the agent the URL via PLAYWRIGHT_MCP_URL and, for Claude, registers the server
 # through a generated read-only --mcp-config file.
 # Launcher-side only: not exported, not interpolated by the compose file.
 SANDBOX_BROWSER_ENABLED="$(resolve SANDBOX_BROWSER_ENABLED .browser.enabled false)"
-SANDBOX_BROWSER_MCP_URL="$(resolve SANDBOX_BROWSER_MCP_URL .browser.mcp_url "http://127.0.0.1:8931/mcp")"
+SANDBOX_BROWSER_MCP_URL="$(resolve SANDBOX_BROWSER_MCP_URL .browser.mcp_url "http://localhost:8931/mcp")"
 
 BROWSER_ENV_ARGS=()
 BROWSER_VOLUME_ARGS=()

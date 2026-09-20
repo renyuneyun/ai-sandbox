@@ -209,9 +209,9 @@ first=1
 for a in "${LAUNCH_ARGS[@]:-}"; do
   [[ "$a" == "" ]] && continue
   if [[ "$first" -eq 1 ]]; then
-    args_json="$(json_quote "$a")"; first=0
+    args_json="\"$(json_quote "$a")\""; first=0
   else
-    args_json="$args_json,$(json_quote "$a")"
+    args_json="$args_json,\"$(json_quote "$a")\""
   fi
 done
 launch_opts="{\"args\":[$args_json]"

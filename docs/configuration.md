@@ -67,7 +67,7 @@ mounts:
 
 browser:
   enabled: true                 # bool,    default: false - drive a visible host browser
-  mcp_url: http://127.0.0.1:8931/mcp  # string, default: http://127.0.0.1:8931/mcp
+  mcp_url: http://localhost:8931/mcp  # string, default: http://localhost:8931/mcp
 
 sandbox:
   uid: 1000          # integer, default: $(id -u)
@@ -279,7 +279,7 @@ By default the sandbox has no browser. When `browser.enabled: true`, the sandbox
 ```yaml
 browser:
   enabled: true                 # drive a visible host browser; default: false
-  mcp_url: http://127.0.0.1:8931/mcp  # default: http://127.0.0.1:8931/mcp
+  mcp_url: http://localhost:8931/mcp  # default: http://localhost:8931/mcp
 ```
 
 The environment overrides are `SANDBOX_BROWSER_ENABLED` and `SANDBOX_BROWSER_MCP_URL`, following the normal precedence: environment override > workspace config > user config > default.
@@ -304,7 +304,7 @@ When `browser.enabled` is true, the launcher:
 - for **Claude** (the default tool), appends `--mcp-config /etc/ai-sandbox/mcp-config.json`, registering the server as `playwright`. The agent can then call `browser_navigate`, `browser_click`, `browser_snapshot`, `browser_take_screenshot`, etc.
 - for **Codex / OpenCode**, the server is reachable at any configured MCP endpoint; read `PLAYWRIGHT_MCP_URL` or register the remote server yourself (Codex reads `~/.codex/config.toml`, OpenCode reads its `mcp` config).
 
-The endpoint is bound to `127.0.0.1` on the host. Because the container uses host networking, the agent reaches it directly at `http://127.0.0.1:8931/mcp` — same mechanism as the host proxy.
+The endpoint is bound to `127.0.0.1` on the host. Because the container uses host networking, the agent reaches it directly — same mechanism as the host proxy. Note that the URL hostname must be `localhost` (the default), not `127.0.0.1`: the playwright-mcp HTTP transport validates the Host header (DNS-rebinding protection) and rejects `127.0.0.1` requests with `403 - Access is only allowed at localhost:8931`.
 
 ### Notes
 
