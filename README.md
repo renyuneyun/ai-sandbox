@@ -76,7 +76,7 @@ browser:
   enabled: true
 ```
 
-When enabled, the launcher passes `PLAYWRIGHT_MCP_URL` into the sandbox and (for Claude) registers the MCP server automatically, so the agent can call `browser_navigate`, `browser_click`, `browser_snapshot`, etc. The browser window appears on the host and is only launched when the agent first drives it. See [docs/configuration.md#browser](docs/configuration.md#browser) for details.
+When enabled, the launcher passes `PLAYWRIGHT_MCP_URL` into the sandbox and (for Claude) registers the MCP server automatically, so the agent can call `browser_navigate`, `browser_click`, `browser_snapshot`, etc. The browser window appears on the host and is only launched when the agent first drives it. See [docs/configuration.md](docs/configuration.md#browser-automation-of-a-visible-host-browser) for details.
 
 ## Configuration
 
@@ -91,7 +91,7 @@ cp /usr/local/share/ai-sandbox/config.example.yaml ~/.config/ai-sandbox/config.y
 
 Requires `yq` on the host; config files are ignored (with a warning) when `yq` is missing.
 
-See [docs/configuration.md](docs/configuration.md) for the full schema and per-knob reference: user identity, git identity, tool versions, Claude/Codex/OpenCode config passthrough, proxy env passthrough, cleanup, git policy config, local-override mode, and the git wrapper policy reference.
+See [docs/configuration.md](docs/configuration.md) for the full schema and per-knob reference: user identity, git identity, tool versions, Claude/Codex/OpenCode config passthrough, proxy env passthrough, cleanup, extra and auto-detected mountpoints, browser automation, startup progress, git policy config, local-override mode, and the git wrapper policy reference.
 
 ## Features
 
@@ -119,10 +119,11 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
 - [x] **Parallel sessions** - each invocation runs as an independent one-shot container, so multiple sandboxed sessions can run concurrently
 - [x] **Startup progress** - a single self-erasing progress line (spinner with elapsed time on a terminal, static lines otherwise) covers config resolution, mount detection, and a tool package cache warm-up run, so the slow first-launch download is visible instead of looking like a hang; disable with `progress.enabled: false` / `SANDBOX_PROGRESS=false`
 - [x] **Pinnable Claude version** - set `CLAUDE_VERSION` to lock a specific Claude Code release inside the container
-- [x] **Automated tests** - host-side test suites cover the launcher, config resolution, and git wrapper
-    - [x] **Launcher and profile tests** - argument parsing, tool selection, version detection, profile configuration, and exact argument passthrough
+- [x] **Automated tests** - host-side test suites cover the launcher, config resolution, the git wrapper, and the host browser-service wrapper
+    - [x] **Launcher and profile tests** - argument parsing, tool selection, version detection, profile configuration, exact argument passthrough, and startup progress
     - [x] **Configuration tests** - YAML validation and env > workspace > user > default resolution
     - [x] **Git wrapper tests** - destructive-operation policy enforcement and argument parsing
+    - [x] **Browser MCP tests** - MCP handshake smoke test against the default browser MCP URL, plus unit tests for the host-side `playwright-mcp` wrapper (browser probing/selection, generated config, Wayland/headless handling)
     - [ ] **Docker-backed runtime tests** - end-to-end verification inside real containers
 - [x] **Customization** - set preferences through config files (with docs and examples)
     - [x] **Config foundation** - YAML config loading (`yq`), env > workspace > user > default precedence, identity knobs (`sandbox_uid`/`gid`/`username`/`home`)
@@ -150,7 +151,7 @@ Open items, mostly around the optional host-browser service (`browser.enabled`):
 - **One shared browser instance across concurrent sessions.** The service holds a single browser; parallel `ai-sandbox` sessions all drive it, so pages/tabs from different agents collide. The `--isolated` option of the MCP server is not wired in.
 - **Codex / OpenCode get no automatic MCP registration.** Only Claude is wired up with `--mcp-config`; for Codex/OpenCode the remote server must be registered manually. So `browser.enabled` is effectively Claude-only as shipped.
 
-Already addressed in this branch: system-browser/Playwright version-mismatch (auto-installs Playwright's own chromium as a fallback) and the hardcoded `DISPLAY=:0` (Wayland is now auto-detected).
+Already addressed: system-browser/Playwright version-mismatch (auto-installs Playwright's own chromium as a fallback) and the hardcoded `DISPLAY=:0` (Wayland is now auto-detected).
 
 ## Testing
 
@@ -160,7 +161,7 @@ Automated tests live in `tests/`. Run all tests from the repo root:
 bash tests/run-all.sh
 ```
 
-Each subdirectory of `tests/` contains a `test.sh` script for one component. The runner discovers and executes all of them. Tests run on the host (no Docker required) - the git wrapper tests use a stubbed real git binary.
+Each subdirectory of `tests/` contains a `test.sh` script for one component. The runner discovers and executes all of them. Tests run on the host (no Docker required) - the git wrapper tests use a stubbed real git binary, and the browser-mcp suite's handshake smoke test is skipped when the host-side browser service is not running.
 
 ## Further reading
 
