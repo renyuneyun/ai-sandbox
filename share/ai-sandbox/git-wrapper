@@ -124,13 +124,33 @@ case "$subcommand" in
         done
         ;;
     worktree)
+        # Allow safe remove: git itself refuses to remove a worktree with
+        # untracked/modified files unless forced, and no objects/refs are
+        # deleted (gc --prune is blocked). Block force forms (-f, --force,
+        # doubled for locked/submodule worktrees). prune stays blocked:
+        # other host worktrees' directories are not visible inside the
+        # sandbox, so prune would consider them stale and delete their
+        # admin entries under .git/worktrees, breaking them on the host.
+        wt_remove=false
+        wt_prune=false
+        has_force=false
         for ((j=subcommand_idx+1; j<=$#; j++)); do
-            case "${!j}" in
-                remove|prune)
-                    block "git worktree ${!j} is blocked by ai-sandbox."
+            arg="${!j}"
+            case "$arg" in
+                remove) wt_remove=true ;;
+                prune) wt_prune=true ;;
+                --force) has_force=true ;;
+                -[!-]*)
+                    [[ "$arg" == *f* ]] && has_force=true
                     ;;
             esac
         done
+        if $wt_prune; then
+            block "git worktree prune is blocked by ai-sandbox."
+        fi
+        if $wt_remove && $has_force; then
+            block "git worktree remove --force is blocked by ai-sandbox."
+        fi
         ;;
     commit)
         for ((j=subcommand_idx+1; j<=$#; j++)); do

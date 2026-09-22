@@ -199,14 +199,16 @@ git:
   #
   # Default policy (built-in, for reference):
   #   Fully blocked subcommands:
-  #     push, reset, rebase, filter-branch, filter-repo, clean, config
+  #     push, reset, rebase, filter-branch, filter-repo, clean, config,
+  #     commit-tree, update-ref, replace, fast-import, prune, symbolic-ref
   #   Conditionally blocked (sub-subcommand or flag):
   #     reflog expire|delete
   #     notes remove|prune
-  #     worktree remove|prune
+  #     worktree prune
   #     stash drop|clear
-  #     branch -d|-D|--delete
-  #     tag -d|--delete|-f|--force
+  #     branch -D|--delete --force (safe -d/--delete allowed)
+  #     tag -f|--force (safe -d/--delete allowed)
+  #     worktree remove -f|--force (safe remove allowed)
   #     commit --amend|--reset-author
   #     checkout -B|-f|--force|-- <pathspec>
   #     switch -C|--discard-changes

@@ -77,9 +77,11 @@ The wrapper does **not** strip user-supplied `-c` flags or `GIT_CONFIG_*` env va
 
 ### Blocked operations
 
-- **Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `clean`, `config`
-- **Conditionally blocked:** `reflog expire|delete`, `notes remove|prune`, `worktree remove|prune`, `stash drop|clear`, `branch -D|--delete --force` (force delete; safe `-d`/`--delete` allowed), `tag -f|--force` (force; safe `-d`/`--delete` allowed)
+- **Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `clean`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`
+- **Conditionally blocked:** `reflog expire|delete`, `notes remove|prune`, `worktree prune`, `stash drop|clear`, `branch -D|--delete --force` (force delete; safe `-d`/`--delete` allowed), `tag -f|--force` (force; safe `-d`/`--delete` allowed), `worktree remove -f|--force` (safe `remove` allowed: git itself refuses to remove a worktree with untracked or modified files unless forced)
 - **Flag-level blocks:** `commit --amend|--reset-author`, `checkout -B|-f|--force|-- <pathspec>`, `switch -C|--discard-changes`, `restore --worktree|-W`, `rm` (without `--cached`), `gc --prune`
+
+`worktree prune` stays blocked even though it only deletes admin metadata: the sandbox does not mount other host worktrees' directories, so from inside the sandbox prune would consider them stale and delete their admin entries under `.git/worktrees`, breaking them on the host.
 
 ### Defense in depth
 

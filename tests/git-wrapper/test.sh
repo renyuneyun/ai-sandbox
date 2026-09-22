@@ -110,11 +110,21 @@ assert_blocked "git notes remove HEAD" notes remove HEAD
 assert_allowed "git notes list" notes list
 assert_allowed "git notes show HEAD" notes show HEAD
 assert_allowed "git notes (no sub-subcommand)" notes
-assert_blocked "git worktree remove" worktree remove
+# Safe remove allowed: git itself refuses dirty/untracked worktrees without force.
+assert_allowed "git worktree remove" worktree remove
+assert_allowed "git worktree remove /tmp/foo" worktree remove /tmp/foo
+# Force forms blocked (-f/--force, doubled for locked/submodule worktrees).
+assert_blocked "git worktree remove --force /tmp/foo" worktree remove --force /tmp/foo
+assert_blocked "git worktree remove -f /tmp/foo" worktree remove -f /tmp/foo
+assert_blocked "git worktree remove --force --force /tmp/foo" worktree remove --force --force /tmp/foo
+assert_blocked "git worktree remove -ff /tmp/foo" worktree remove -ff /tmp/foo
+# prune stays blocked: host worktree dirs are not visible in the sandbox, so
+# prune would delete their admin entries under .git/worktrees.
 assert_blocked "git worktree prune" worktree prune
-assert_blocked "git worktree remove /tmp/foo" worktree remove /tmp/foo
+assert_blocked "git worktree prune --expire 1.week.ago" worktree prune --expire 1.week.ago
 assert_allowed "git worktree list" worktree list
 assert_allowed "git worktree add ../foo" worktree add ../foo
+assert_allowed "git worktree add --force ../foo" worktree add --force ../foo
 assert_allowed "git worktree (no sub-subcommand)" worktree
 
 # Task 4: flag-level blocks (commit, tag, branch)
@@ -385,7 +395,8 @@ assert_allowed_override "override: git rm file" rm file
 assert_allowed_override "override: git gc --prune" gc --prune
 assert_allowed_override "override: git reflog expire" reflog expire
 assert_allowed_override "override: git notes remove" notes remove
-assert_allowed_override "override: git worktree remove x" worktree remove x
+assert_allowed_override "override: git worktree remove --force x" worktree remove --force x
+assert_allowed_override "override: git worktree prune" worktree prune
 assert_allowed_override "override: git commit-tree HEAD" commit-tree HEAD
 assert_allowed_override "override: git update-ref refs/heads/x HEAD" update-ref refs/heads/x HEAD
 assert_allowed_override "override: git replace refs/heads/x HEAD" replace refs/heads/x HEAD

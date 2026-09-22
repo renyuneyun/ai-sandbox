@@ -413,7 +413,9 @@ Block messages include guidance for the AI agent: the restriction is intentional
 
 **Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `clean`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`.
 
-**Conditionally blocked subcommands:** `reflog expire|delete`, `notes remove|prune`, `worktree remove|prune`, `stash drop|clear`, `branch -d|-D|--delete`, `tag -d|--delete|-f|--force`.
+**Conditionally blocked subcommands:** `reflog expire|delete`, `notes remove|prune`, `worktree prune`, `stash drop|clear`, `branch -D|--delete --force` (force delete; safe `-d`/`--delete` allowed), `tag -f|--force` (force; safe `-d`/`--delete` allowed), `worktree remove -f|--force` (force remove; safe `remove` allowed — git itself refuses to remove a worktree with untracked or modified files unless forced).
+
+`worktree prune` stays fully blocked even though it only deletes admin metadata (under `.git/worktrees`): the sandbox does not mount other host worktrees' directories, so from inside the sandbox prune would consider them stale and delete their admin entries, breaking them on the host.
 
 **Flag-level blocks on allowed subcommands:**
 
@@ -431,4 +433,4 @@ Block messages include guidance for the AI agent: the restriction is intentional
 **Known limitations:**
 - The wrapper is a soft barrier. Calling `/usr/bin/git` by absolute path bypasses it. This is consistent with the project's threat model (accidental damage, not adversarial resistance).
 - The wrapper does not strip `-c` flags or `GIT_CONFIG_*` env vars. A command like `git -c alias.x='!/usr/bin/git push' x` would bypass the push block. This is acceptable because push is also blocked by system git config (defense in depth), and the threat model is non-adversarial.
-- Long-flag abbreviations (e.g., `--forc` for `--force`) bypass flag-level checks in subcommands that use exact-match patterns (`commit`, `tag`, `branch`, `checkout`, `restore`). The `rm` and `gc` cases use prefix matching and are not affected. Claude uses full flag names in practice, so this is a low-risk gap.
+- Long-flag abbreviations (e.g., `--forc` for `--force`) bypass flag-level checks in subcommands that use exact-match patterns (`commit`, `tag`, `branch`, `checkout`, `restore`, `worktree`). The `rm` and `gc` cases use prefix matching and are not affected. Claude uses full flag names in practice, so this is a low-risk gap.

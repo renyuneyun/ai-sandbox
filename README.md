@@ -100,7 +100,7 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
 - [x] **Sandboxed execution** - confines Claude Code to the target workspace, protecting the rest of your system from unintended changes
     - [x] **Workspace isolation** - only the target project directory is mounted; the rest of the host filesystem is unreachable inside the container
     - [x] **Isolated environment and cache** - packages and global tools install into a persistent container volume, never touching the host
-    - [x] **Git operation policy** - a wrapper script blocks destructive git operations (push, reset, rebase, clean, commit --amend, branch -D, tag -f, etc.) and history-bypass plumbing (commit-tree, update-ref, replace, fast-import, prune, symbolic-ref) while allowing non-destructive and appending-only operations (commit, add, status, log, fetch, merge, branch -d, tag -d, etc.)
+    - [x] **Git operation policy** - a wrapper script blocks destructive git operations (push, reset, rebase, clean, commit --amend, branch -D, tag -f, worktree remove --force, worktree prune, etc.) and history-bypass plumbing (commit-tree, update-ref, replace, fast-import, prune, symbolic-ref) while allowing non-destructive and appending-only operations (commit, add, status, log, fetch, merge, branch -d, tag -d, worktree remove, etc.)
     - [x] **Git config inheritance** - the host user's `~/.gitconfig` and `~/.config/git/` are bind-mounted read-only so Claude commits with the host user's identity
     - [x] **Sandbox information** - The runtime can detect that it is in the sandbox
         - [x] Option 1: via `IS_SANDBOX=1`
