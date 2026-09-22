@@ -47,7 +47,7 @@ codex:
   config_dir: ~/.codex          # string,  default: ~/.codex
 
 opencode:
-  version: "0.6.9"              # string,  default: host's opencode version
+  version: "2.0.12"             # string,  default: host's opencode version; 1.x -> opencode-ai, 2.x -> @opencode/cli
   config_passthrough: true      # bool,    default: true
   data_passthrough: true        # bool,    default: true
   config_dir: ~/.config/opencode        # string, default: ~/.config/opencode
@@ -167,8 +167,17 @@ OpenCode pins its version with `opencode.version` and `OPENCODE_VERSION`:
 
 ```yaml
 opencode:
-  version: "0.6.9"
+  version: "2.0.12"
 ```
+
+OpenCode v1 and v2 are separate npm packages, so the resolved version selects the package: `1.x` runs the legacy `opencode-ai` package, while `2.x` (and any non-`1.x` value such as `latest`, plus the no-host-CLI default) runs `@opencode/cli`. When your host CLI is still v1 but you want v2 in the sandbox, pin it explicitly:
+
+```yaml
+opencode:
+  version: "2"        # or a full version like "2.0.12"
+```
+
+opencode v2 also launches with `--standalone`, which runs a private server instead of its managed background service. The container shares the host's network namespace, and the background service binds a fixed port on `127.0.0.1`; without `--standalone` it would collide with a host-side background service and the TUI would hang at "Starting background server..." until its startup timeout.
 
 ## Claude config passthrough
 

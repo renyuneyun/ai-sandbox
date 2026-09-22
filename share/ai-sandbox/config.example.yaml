@@ -43,9 +43,12 @@ codex:
   # config_dir: /path/to/custom/.codex
 
 opencode:
-  # OpenCode version to run inside the container.
+  # OpenCode version to run inside the container. 1.x selects the legacy
+  # opencode-ai package; 2.x (and the no-host-CLI default) selects @opencode/cli,
+  # which launches with --standalone so its background service cannot collide
+  # with a host-side one over the shared network namespace.
   # Default: host's opencode version; npm's latest when opencode is not installed.
-  # version: "0.6.9"
+  # version: "2.0.12"
 
   # When false, host ~/.config/opencode (opencode.json, agents, themes)
   # is not mounted. Default: true.

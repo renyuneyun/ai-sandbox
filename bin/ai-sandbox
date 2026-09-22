@@ -268,8 +268,22 @@ configure_tool() {
       ;;
     opencode)
       version="$(resolve OPENCODE_VERSION .opencode.version "$(detect_host_version opencode)")"
-      TOOL_PACKAGE="opencode-ai${version:+@${version}}"
-      TOOL_DEFAULT_ARGS=(--auto)
+      # opencode v1 and v2 are separate npm packages. 1.x keeps the legacy
+      # opencode-ai package; 2.x (and the no-host-CLI default, npm's latest)
+      # runs @opencode/cli with --standalone: the container shares the host
+      # network namespace, and v2's managed background service binds a fixed
+      # port on 127.0.0.1 that would collide with a host-side service and
+      # leave the TUI hanging until its startup timeout.
+      case "${version#v}" in
+        1|1.*)
+          TOOL_PACKAGE="opencode-ai${version:+@${version}}"
+          TOOL_DEFAULT_ARGS=(--auto)
+          ;;
+        *)
+          TOOL_PACKAGE="@opencode/cli${version:+@${version}}"
+          TOOL_DEFAULT_ARGS=(--auto --standalone)
+          ;;
+      esac
 
       OPENCODE_CONFIG_PASSTHROUGH="$(resolve OPENCODE_CONFIG_PASSTHROUGH .opencode.config_passthrough true)"
       OPENCODE_DATA_PASSTHROUGH="$(resolve OPENCODE_DATA_PASSTHROUGH .opencode.data_passthrough true)"

@@ -243,12 +243,13 @@ assert_eq "profile Codex: absent host CLI is unpinned" "@openai/codex" "$TOOL_PA
 PATH="$OLD_PATH"
 
 reset_profile_context
-OPENCODE_VERSION=0.6.9
+OPENCODE_VERSION=1.18.29
 ANTHROPIC_API_KEY=anthropic-secret
 OPENAI_API_KEY=openai-secret
 configure_tool opencode
-assert_eq "profile OpenCode: package" "opencode-ai@0.6.9" "$TOOL_PACKAGE"
-assert_eq "profile OpenCode: autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
+assert_eq "profile OpenCode: v1 package" "opencode-ai@1.18.29" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: v1 autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
+assert_eq "profile OpenCode: v1 has no standalone flag" "1" "${#TOOL_DEFAULT_ARGS[@]}"
 assert_eq "profile OpenCode: two mounts" "4" "${#TOOL_VOLUME_ARGS[@]}"
 assert_eq "profile OpenCode: config mount destination" "$HOME/.config/opencode:$SANDBOX_HOME/.config/opencode" "${TOOL_VOLUME_ARGS[1]}"
 assert_eq "profile OpenCode: data mount destination" "$HOME/.local/share/opencode:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[3]}"
@@ -257,6 +258,27 @@ assert_eq "profile OpenCode: two API key pairs" "4" "${#TOOL_ENV_ARGS[@]}"
    "$(printf '<%s>' "${TOOL_ENV_ARGS[@]}")" == *"<OPENAI_API_KEY=openai-secret>"* ]] &&
   ok "profile OpenCode: both API key names forwarded" ||
   bad "profile OpenCode: both API key names forwarded ($(printf '<%s>' "${TOOL_ENV_ARGS[@]}"))"
+
+reset_profile_context
+OPENCODE_VERSION=2.0.12
+ANTHROPIC_API_KEY=anthropic-secret
+OPENAI_API_KEY=openai-secret
+configure_tool opencode
+assert_eq "profile OpenCode: v2 package" "@opencode/cli@2.0.12" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: v2 autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
+assert_eq "profile OpenCode: v2 standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
+assert_eq "profile OpenCode: v2 two mounts" "4" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: v2 two API key pairs" "4" "${#TOOL_ENV_ARGS[@]}"
+
+reset_profile_context
+OPENCODE_VERSION=latest
+configure_tool opencode
+assert_eq "profile OpenCode: latest resolves to the v2 package" "@opencode/cli@latest" "$TOOL_PACKAGE"
+
+reset_profile_context
+OPENCODE_VERSION=v2.0.11
+configure_tool opencode
+assert_eq "profile OpenCode: leading v in version is tolerated" "@opencode/cli@v2.0.11" "$TOOL_PACKAGE"
 
 reset_profile_context
 OPENCODE_CONFIG_PASSTHROUGH=false
@@ -281,12 +303,24 @@ assert_eq "profile OpenCode: custom data mount preserves spaces" "$OPENCODE_DATA
 reset_profile_context
 STUB_BIN="$PROFILE_TMP/bin"
 mkdir -p "$STUB_BIN"
-printf '#!/bin/sh\nprintf "opencode 7.7.7\\n"\n' > "$STUB_BIN/opencode"
+printf '#!/bin/sh\nprintf "opencode 1.2.3\\n"\n' > "$STUB_BIN/opencode"
 chmod +x "$STUB_BIN/opencode"
 OLD_PATH="$PATH"
 PATH="$STUB_BIN:$PATH"
 configure_tool opencode
-assert_eq "profile OpenCode: host version fallback" "opencode-ai@7.7.7" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: host v1 version fallback" "opencode-ai@1.2.3" "$TOOL_PACKAGE"
+PATH="$OLD_PATH"
+
+reset_profile_context
+STUB_BIN="$PROFILE_TMP/bin-v2"
+mkdir -p "$STUB_BIN"
+printf '#!/bin/sh\nprintf "opencode v2.0.12\\n"\n' > "$STUB_BIN/opencode"
+chmod +x "$STUB_BIN/opencode"
+OLD_PATH="$PATH"
+PATH="$STUB_BIN:$PATH"
+configure_tool opencode
+assert_eq "profile OpenCode: host v2 version fallback" "@opencode/cli@2.0.12" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: host v2 adds standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 PATH="$OLD_PATH"
 
 reset_profile_context
@@ -294,7 +328,8 @@ EMPTY_BIN="$PROFILE_TMP/empty-bin"
 /bin/mkdir -p "$EMPTY_BIN"
 PATH="$EMPTY_BIN"
 configure_tool opencode
-assert_eq "profile OpenCode: absent host CLI is unpinned" "opencode-ai" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: absent host CLI defaults to the v2 package" "@opencode/cli" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: absent host CLI adds standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 PATH="$OLD_PATH"
 
 # PATH is emptied so detect_host_version finds no `opencode` on PATH. Otherwise
@@ -367,10 +402,10 @@ CAPTURE_DIR_OPENCODE="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_OPENCODE")
 run_captured_launcher "$CAPTURE_DIR_OPENCODE" --tool opencode "$SCRIPT_DIR/../.." -- --model "test model" resume
 CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
-[[ "$CAPTURED_JOINED" == *"<opencode-ai@integration-test"* ]] &&
+[[ "$CAPTURED_JOINED" == *"<@opencode/cli@integration-test"* ]] &&
   ok "integration: OpenCode package reaches Docker" ||
   bad "integration: OpenCode package reaches Docker ($CAPTURED_JOINED)"
-[[ "$CAPTURED_JOINED" == *"<--auto><--model><test model><resume>"* ]] &&
+[[ "$CAPTURED_JOINED" == *"<--auto><--standalone><--model><test model><resume>"* ]] &&
   ok "integration: OpenCode defaults precede exact passthrough args" ||
   bad "integration: OpenCode passthrough ordering ($CAPTURED_JOINED)"
 
@@ -778,7 +813,7 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
 
 run_entrypoint asb-opencode "$SCRIPT_DIR/../.."
 CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
-[[ "$CAPTURED_JOINED" == *"<opencode-ai@entry-test>"* ]] &&
+[[ "$CAPTURED_JOINED" == *"<@opencode/cli@entry-test>"* ]] &&
   ok "entrypoint: asb-opencode selects opencode" ||
   bad "entrypoint: asb-opencode selects opencode ($CAPTURED_JOINED)"
 

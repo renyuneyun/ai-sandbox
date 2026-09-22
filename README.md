@@ -59,6 +59,8 @@ Set `AI_SANDBOX_DIR` to override the directory containing `docker-compose.yml`.
 
 Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
 
+OpenCode v1 and v2 are separate npm packages: a `1.x` version runs the legacy `opencode-ai` package, while `2.x` — the default when no host CLI is found — runs `@opencode/cli`. v2 launches with `--standalone` (a private server instead of its managed background service) because the container shares the host's network namespace and the background service's fixed loopback port would collide with a host-side instance, leaving the TUI hanging at startup.
+
 ## Browser automation (on the host)
 
 The sandbox can drive a browser that runs on the host, so the user sees and can interact with it. This is a one-time, scripted setup followed by a config flag:
