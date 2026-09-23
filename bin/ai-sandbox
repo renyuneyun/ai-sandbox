@@ -53,6 +53,14 @@ resolve_list() {  # ENV_NAME YQ_PATH
   echo ""
 }
 
+# Resolve a pinned tool version, giving an @version bundled into the tool spec
+# highest precedence, before env > workspace > user > default.
+resolve_version() {  # ENV_NAME YQ_PATH DEFAULT
+  local env_name="$1" yq_path="$2" default="$3"
+  if [[ -n "${CLI_TOOL_VERSION:-}" ]]; then echo "$CLI_TOOL_VERSION"; return; fi
+  resolve "$env_name" "$yq_path" "$default"
+}
+
 launcher_error() {
   if [[ -n "$PROGRESS_ACTIVE" ]]; then
     progress_stop
@@ -159,6 +167,7 @@ browser_endpoint_reachable() {  # URL
 
 parse_launcher_args() {
   CLI_TOOL=""
+  CLI_TOOL_VERSION=""
   CLI_ALLOW_LOCAL_GIT=""
   WORKSPACE_ARG=""
   TOOL_USER_ARGS=()
@@ -202,8 +211,19 @@ resolve_tool() {
   else
     selected="$(resolve SANDBOX_TOOL .tool claude)"
   fi
+  # An optional trailing "@<version>" pins the tool version; it takes
+  # precedence during configure_tool. Tolerated in the CLI --tool value and in
+  # SANDBOX_TOOL/.tool alike. Recorded in globals so main can read them WITHOUT
+  # a subshell (a command-substitution call would lose the assignment).
   case "$selected" in
-    claude|codex|opencode) echo "$selected" ;;
+    *@*) CLI_TOOL_VERSION="${selected#*@}"; selected="${selected%%@*}" ;;
+    *)   CLI_TOOL_VERSION="" ;;
+  esac
+  case "$selected" in
+    claude|codex|opencode)
+      CLI_RESOLVED_TOOL="$selected"
+      printf '%s\n' "$selected"
+      ;;
     *) launcher_error "unsupported tool '$selected'; supported tools: claude, codex, opencode" ;;
   esac
 }
@@ -235,7 +255,7 @@ configure_tool() {
 
   case "$tool" in
     claude)
-      version="$(resolve CLAUDE_VERSION .claude.version "$(detect_host_version claude)")"
+      version="$(resolve_version CLAUDE_VERSION .claude.version "$(detect_host_version claude)")"
       TOOL_PACKAGE="@anthropic-ai/claude-code${version:+@${version}}"
       TOOL_DEFAULT_ARGS=(--dangerously-skip-permissions)
 
@@ -253,7 +273,7 @@ configure_tool() {
       return 0
       ;;
     codex)
-      version="$(resolve CODEX_VERSION .codex.version "$(detect_host_version codex)")"
+      version="$(resolve_version CODEX_VERSION .codex.version "$(detect_host_version codex)")"
       TOOL_PACKAGE="@openai/codex${version:+@${version}}"
       TOOL_DEFAULT_ARGS=(--dangerously-bypass-approvals-and-sandbox)
 
@@ -275,7 +295,7 @@ configure_tool() {
         ''|1|1.*) ;;
         *) host_version="" ;;
       esac
-      version="$(resolve OPENCODE_VERSION .opencode.version "$host_version")"
+      version="$(resolve_version OPENCODE_VERSION .opencode.version "$host_version")"
       # opencode v1 and v2 are separate npm packages. 1.x keeps the legacy
       # opencode-ai package; 2.x runs @opencode/cli with --standalone: the
       # container shares the host network namespace, and v2's managed
@@ -616,7 +636,10 @@ export SANDBOX_GID="$(resolve SANDBOX_GID .sandbox.gid "$(id -g)")"
 export SANDBOX_USERNAME="$(resolve SANDBOX_USERNAME .sandbox.username "$(id -un)")"
 export SANDBOX_HOME="$(resolve SANDBOX_HOME .sandbox.home "/home/$SANDBOX_USERNAME")"
 
-SELECTED_TOOL="$(resolve_tool "$CLI_TOOL")"
+# resolve_tool runs in the current shell (not a subshell) so the bundled @version
+# it parses lands in CLI_TOOL_VERSION; the bare tool name (its stdout) is discarded.
+resolve_tool "$CLI_TOOL" >/dev/null
+SELECTED_TOOL="$CLI_RESOLVED_TOOL"
 configure_tool "$SELECTED_TOOL"
 
 # Proxy environment passthrough applies to npx and every tool profile.

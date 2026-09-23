@@ -50,10 +50,13 @@ ai-sandbox --tool codex
 asb-codex                # per-tool alias, equivalent to: ai-sandbox --tool codex
 asb-codex ~/projects/my-app -- --model gpt-5.4
 ai-sandbox --tool opencode
+ai-sandbox --tool opencode@v1.29.11          # pin a specific tool version
 ai-sandbox ~/projects/my-app -- --resume
 ```
 
 Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
+
+A tool version can be bundled into the `--tool` spec (`ai-sandbox --tool codex@1.2.3`, `opencode@v1.29.11`, `claude@2.1.152`). A bundled `@version` is the highest-precedence pin, beating the version env vars, config, and host-version fallback; the leading `v` is optional. `--tool opencode@2.5.0` therefore selects opencode v2 directly.
 
 Set `AI_SANDBOX_DIR` to override the directory containing `docker-compose.yml`.
 

@@ -8,6 +8,8 @@
 # Precedence per knob: env var > workspace config > user config > built-in default.
 
 # Coding agent to run. Supported values: claude, codex, opencode.
+# A version can be bundled as "tool@version" (e.g. opencode@v1.29.11) to pin
+# the package version too, like `ai-sandbox --tool opencode@v1.29.11`.
 # Default: claude.
 # tool: opencode
 

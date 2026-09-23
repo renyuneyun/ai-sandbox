@@ -114,6 +114,19 @@ unset SANDBOX_TOOL
 if resolve_tool unknown >/dev/null 2>&1; then bad "select: unknown tool"; else ok "select: unknown tool"; fi
 unset SANDBOX_TOOL
 
+# Bundled @version: tool is echoed, version is captured in the global.
+resolve_tool opencode@v1.29.11 >/dev/null
+assert_eq "select: CLI bundled version keeps tool" "opencode" "$CLI_RESOLVED_TOOL"
+assert_eq "select: CLI bundled version captured (with v)" "v1.29.11" "$CLI_TOOL_VERSION"
+resolve_tool opencode@1.29.11 >/dev/null
+assert_eq "select: CLI bundled version captured (no v)" "1.29.11" "$CLI_TOOL_VERSION"
+resolve_tool claude >/dev/null
+assert_eq "select: plain CLI clears bundled version" "" "$CLI_TOOL_VERSION"
+resolve_tool codex@2.5.0 >/dev/null
+assert_eq "select: bundled version on codex" "codex" "$CLI_RESOLVED_TOOL"
+assert_eq "select: bundled version on codex captured" "2.5.0" "$CLI_TOOL_VERSION"
+unset CLI_TOOL_VERSION CLI_RESOLVED_TOOL
+
 if command -v yq >/dev/null 2>&1; then
     LAUNCHER_TMP="$(mktemp -d)"
     PROFILE_TMP_DIRS+=("$LAUNCHER_TMP")
@@ -187,6 +200,7 @@ reset_profile_context() {
     unset CODEX_VERSION CODEX_CONFIG_PASSTHROUGH CODEX_CONFIG_DIR
     unset OPENCODE_VERSION OPENCODE_CONFIG_PASSTHROUGH OPENCODE_DATA_PASSTHROUGH OPENCODE_CONFIG_DIR OPENCODE_DATA_DIR
     unset ANTHROPIC_API_KEY OPENAI_API_KEY
+    unset CLI_TOOL_VERSION CLI_RESOLVED_TOOL
 }
 
 reset_profile_context
@@ -310,6 +324,38 @@ PATH="$STUB_BIN:$PATH"
 configure_tool opencode
 assert_eq "profile OpenCode: host v1 version fallback" "opencode-ai@1.2.3" "$TOOL_PACKAGE"
 PATH="$OLD_PATH"
+
+# Bundled @version in the tool spec overrides env/config/host-version pins.
+reset_profile_context
+CLI_TOOL_VERSION=2.3.4
+ANTHROPIC_API_KEY=anthropic-secret
+OPENAI_API_KEY=openai-secret
+configure_tool claude
+assert_eq "profile Claude: bundled version wins" "@anthropic-ai/claude-code@2.3.4" "$TOOL_PACKAGE"
+
+reset_profile_context
+CLI_TOOL_VERSION=2.3.4
+ANTHROPIC_API_KEY=anthropic-secret
+OPENAI_API_KEY=openai-secret
+configure_tool codex
+assert_eq "profile Codex: bundled version wins" "@openai/codex@2.3.4" "$TOOL_PACKAGE"
+
+reset_profile_context
+CLI_TOOL_VERSION=v1.29.11
+ANTHROPIC_API_KEY=anthropic-secret
+OPENAI_API_KEY=openai-secret
+configure_tool opencode
+assert_eq "profile OpenCode: bundled v1 version wins package" "opencode-ai@v1.29.11" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: bundled v1 version chips v1 flags" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
+assert_eq "profile OpenCode: bundled v1 version standalone omitted" "1" "${#TOOL_DEFAULT_ARGS[@]}"
+
+reset_profile_context
+CLI_TOOL_VERSION=v2.0.11
+ANTHROPIC_API_KEY=anthropic-secret
+OPENAI_API_KEY=openai-secret
+configure_tool opencode
+assert_eq "profile OpenCode: bundled v2 version wins package" "@opencode/cli@v2.0.11" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: bundled v2 version chip" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 
 reset_profile_context
 STUB_BIN="$PROFILE_TMP/bin-v2"

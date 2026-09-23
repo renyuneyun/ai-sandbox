@@ -156,6 +156,8 @@ claude:
 
 Same precedence as other knobs: env var > workspace config > user config > host's installed version.
 
+You can also bundle a version directly into a `--tool` spec, e.g. `ai-sandbox --tool codex@1.2.3` or `ai-sandbox --tool opencode@v1.29.11`. A bundled `@version` is the highest-precedence pin and wins over the version env vars, config, and host-version fallback; the leading `v` is optional. This also applies to the `SANDBOX_TOOL` env or `tool` config value.
+
 Codex mirrors this with `codex.version` and `CODEX_VERSION`:
 
 ```yaml
