@@ -47,7 +47,7 @@ codex:
   config_dir: ~/.codex          # string,  default: ~/.codex
 
 opencode:
-  version: "2.0.12"             # string,  default: host's opencode version; 1.x -> opencode-ai, 2.x -> @opencode/cli
+  version: "2.0.12"             # string,  default: host opencode v1 if installed, else v1 (a host v2 is ignored); 1.x/empty -> opencode-ai, 2.x -> @opencode/cli
   config_passthrough: true      # bool,    default: true
   data_passthrough: true        # bool,    default: true
   config_dir: ~/.config/opencode        # string, default: ~/.config/opencode
@@ -170,14 +170,20 @@ opencode:
   version: "2.0.12"
 ```
 
-OpenCode v1 and v2 are separate npm packages, so the resolved version selects the package: `1.x` runs the legacy `opencode-ai` package, while `2.x` (and any non-`1.x` value such as `latest`, plus the no-host-CLI default) runs `@opencode/cli`. When your host CLI is still v1 but you want v2 in the sandbox, pin it explicitly:
+OpenCode v1 and v2 are separate npm packages, so the resolved version selects the package: `1.x` (and no pinned version) runs the legacy `opencode-ai` package, while `2.x` (or any other non-`1.x` value such as `latest`) runs `@opencode/cli`. The default is opencode **v1** (`opencode-ai`); an installed host opencode v1 is mirrored, but a **host opencode v2 is ignored** and still defaults to v1. Use opencode v2 only when you pin it explicitly:
 
 ```yaml
 opencode:
   version: "2"        # or a full version like "2.0.12"
 ```
 
-opencode v2 also launches with `--standalone`, which runs a private server instead of its managed background service. The container shares the host's network namespace, and the background service binds a fixed port on `127.0.0.1`; without `--standalone` it would collide with a host-side background service and the TUI would hang at "Starting background server..." until its startup timeout.
+### OpenCode v2 limitations
+
+**OpenCode v2 is single-instance.** It runs a single managed background server that binds a fixed port on `127.0.0.1`, so only **one** opencode v2 instance can run at a time. A second simultaneous run — whether another sandbox or a host-side opencode v2 process — cannot start correctly: the instances collide over the fixed port and the TUI fails or hangs at "Starting background server..." until its startup timeout. This is a property of opencode v2 itself, not just this launcher: it does not support multiple concurrent runs, including from the host.
+
+The launcher launches v2 with `--standalone`, which runs a private server instead of the managed background service, avoiding a collision with a host-side background service *for a single run*. `--standalone` does **not** make concurrent v2 runs work. If you need to run multiple sandboxes, or opencode alongside a host-side opencode, use opencode **v1**.
+
+**v2 is not the default.** Because of the above, the default is opencode v1 (`opencode-ai`), which has none of these limitations: each v1 run is independent and can run concurrently. Use v2 only for a single, isolated run when you specifically need v2.
 
 ## Claude config passthrough
 

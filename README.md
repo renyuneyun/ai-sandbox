@@ -59,7 +59,9 @@ Set `AI_SANDBOX_DIR` to override the directory containing `docker-compose.yml`.
 
 Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
 
-OpenCode v1 and v2 are separate npm packages: a `1.x` version runs the legacy `opencode-ai` package, while `2.x` — the default when no host CLI is found — runs `@opencode/cli`. v2 launches with `--standalone` (a private server instead of its managed background service) because the container shares the host's network namespace and the background service's fixed loopback port would collide with a host-side instance, leaving the TUI hanging at startup.
+OpenCode v1 and v2 are separate npm packages: a `1.x` version (and no pinned version — the v1 default) runs the legacy `opencode-ai` package, while `2.x` runs `@opencode/cli`. An installed host opencode **v1** is mirrored, but a host opencode **v2** is ignored and still defaults to v1; use v2 only when pinned via `OPENCODE_VERSION` or `opencode.version`.
+
+**OpenCode v2 limitation:** v2 is single-instance only. It runs one managed background server on a fixed loopback port, so it cannot run multiple simultaneous sessions — two `--tool opencode` sandboxes, or a sandbox alongside a host-side opencode v2, collide on that port and fail or hang at startup. For concurrent runs (including alongside a host opencode), use opencode **v1**, which is the default. v2 launches with `--standalone` (a private server instead of its managed background service) because the container shares the host's network namespace and the background service's fixed loopback port would collide with a host-side instance, leaving the TUI hanging at startup.
 
 ## Browser automation (on the host)
 

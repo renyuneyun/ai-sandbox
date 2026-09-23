@@ -319,8 +319,8 @@ chmod +x "$STUB_BIN/opencode"
 OLD_PATH="$PATH"
 PATH="$STUB_BIN:$PATH"
 configure_tool opencode
-assert_eq "profile OpenCode: host v2 version fallback" "@opencode/cli@2.0.12" "$TOOL_PACKAGE"
-assert_eq "profile OpenCode: host v2 adds standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
+assert_eq "profile OpenCode: host v2 is ignored for the default" "opencode-ai" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: host v2 default has no standalone flag" "1" "${#TOOL_DEFAULT_ARGS[@]}"
 PATH="$OLD_PATH"
 
 reset_profile_context
@@ -328,8 +328,8 @@ EMPTY_BIN="$PROFILE_TMP/empty-bin"
 /bin/mkdir -p "$EMPTY_BIN"
 PATH="$EMPTY_BIN"
 configure_tool opencode
-assert_eq "profile OpenCode: absent host CLI defaults to the v2 package" "@opencode/cli" "$TOOL_PACKAGE"
-assert_eq "profile OpenCode: absent host CLI adds standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
+assert_eq "profile OpenCode: absent host CLI defaults to the v1 package" "opencode-ai" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: absent host CLI has no standalone flag" "1" "${#TOOL_DEFAULT_ARGS[@]}"
 PATH="$OLD_PATH"
 
 # PATH is emptied so detect_host_version finds no `opencode` on PATH. Otherwise
