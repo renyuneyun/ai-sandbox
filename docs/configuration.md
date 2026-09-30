@@ -208,6 +208,8 @@ claude:
 
 The container-side path is always `${SANDBOX_HOME}/.claude` and `${SANDBOX_HOME}/.claude.json` (that's where Claude Code expects them); only the host-side path changes. This lets you share a dedicated Claude config across projects or use a config that differs from your host user's default.
 
+The matching environment overrides are `CLAUDE_CONFIG_PASSTHROUGH`, `CLAUDE_CONFIG_DIR`, and `CLAUDE_CONFIG_FILE`.
+
 ## Codex config passthrough
 
 Codex similarly bind-mounts the host's `~/.codex` directory read/write at `${SANDBOX_HOME}/.codex`. Disable it independently with `codex.config_passthrough: false`, or choose a custom host path with `codex.config_dir`. The matching environment overrides are `CODEX_CONFIG_PASSTHROUGH` and `CODEX_CONFIG_DIR`.

@@ -21,6 +21,7 @@ claude:
   # When false, host ~/.claude and ~/.claude.json are not mounted into
   # the container. Useful with ANTHROPIC_API_KEY for a more isolated
   # environment. Default: true.
+  # Env override: CLAUDE_CONFIG_PASSTHROUGH.
   # config_passthrough: true
 
   # Custom host paths for the Claude config directory and file.
@@ -28,6 +29,7 @@ claude:
   # ${SANDBOX_HOME}/.claude.json (that's where Claude Code expects them);
   # only the host-side path is configurable.
   # Default: ~/.claude and ~/.claude.json respectively.
+  # Env overrides: CLAUDE_CONFIG_DIR and CLAUDE_CONFIG_FILE.
   # config_dir: /path/to/custom/.claude
   # config_file: /path/to/custom/.claude.json
 
