@@ -104,6 +104,26 @@ Requires `yq` on the host; config files are ignored (with a warning) when `yq` i
 
 See [docs/configuration.md](docs/configuration.md) for the full schema and per-knob reference: user identity, git identity, tool versions, Claude/Codex/OpenCode config passthrough, proxy env passthrough, cleanup, extra and auto-detected mountpoints, browser automation, startup progress, git policy config, local-override mode, and the git wrapper policy reference.
 
+## Shell completion
+
+The package ships bash and zsh tab-completion for `ai-sandbox` and its aliases (`asb`, `asb-claude`, `asb-codex`, `asb-opencode`).
+
+How it works: when you press Tab, your shell runs a completion function that offers the launcher's options (`--tool`, `--help`, `--version`, `--allow-local-git`, `--`), the tool names after `--tool` (`claude`, `codex`, `opencode`), and directory names for the workspace argument. After a bare `--`, completion defers to the selected tool's own arguments (i.e. the shell's default).
+
+Install places the files where the shells look automatically:
+
+- **bash** — `<prefix>/share/bash-completion/completions/ai-sandbox` (plus symlinks for the aliases), loaded lazily by `bash-completion`.
+- **zsh** — `<prefix>/share/zsh/site-functions/_ai-sandbox`, loaded by `compinit`.
+
+If your prefix is not on your shell's completion search path (or you don't use those frameworks), source them manually:
+
+```sh
+# bash
+source <prefix>/share/ai-sandbox/completions/ai-sandbox.bash
+# zsh (before compinit, or re-run compinit afterwards)
+fpath+=(<prefix>/share/ai-sandbox/completions)
+```
+
 ## Features
 
 - [x] **Sandboxed execution** - confines Claude Code to the target workspace, protecting the rest of your system from unintended changes

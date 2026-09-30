@@ -43,12 +43,14 @@ Any change to behavior, the CLI, volumes, config/env knobs, or the install layou
 - [ ] `docs/configuration.md` — the Schema block plus a per-knob section for every new knob/env var (default, precedence, semantics).
 - [ ] `docs/architecture.md` — Volume-layout table, Container-environment table, and lifecycle/security-model sections that touch mounts, volumes, env, or network.
 - [ ] `docs/development.md` — Key invariants (launcher-side-only knobs, functions that must stay outside the main guard), the config-resolution defaults, and the Manual testing checklist (add/refresh numbered items).
-- [ ] `install.sh` + `packaging/PKGBUILD` — add any new installed file (launcher, data file, systemd unit) to both.
+- [ ] `install.sh` + `packaging/PKGBUILD` — add any new installed file (launcher, data file, systemd unit, completion file) to both.
+- [ ] `--help` + shell completions — when a CLI option, supported tool, or alias changes, update `print_help()` in `bin/ai-sandbox` **and** both completion files (`share/ai-sandbox/completions/ai-sandbox.bash`, `share/ai-sandbox/completions/_ai-sandbox`) so the three stay in sync with `parse_launcher_args`.
 
 **Drift audit** — do this even when you did not author the change:
 
 - Extract every `resolve`/`resolve_list` knob from `bin/ai-sandbox` and diff the set against `docs/` + `config.example.yaml`. Every knob must appear somewhere.
 - Grep for new env vars, CLI flags, or mount-behavior changes and confirm each is documented.
+- Diff the `--help` option list and the two completion files against the flags `parse_launcher_args` (and the entrypoint aliases) actually handle; any divergence means a feature shipped without updating `--help`/completions.
 - If an older commit shipped a feature without its doc update, fold that doc fix into this change rather than leaving it.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` are historical planning artifacts (they may reference old names like `bin/claude-sandboxed`, `CLAUDE_VOLUME_ARGS`) and are intentionally **not** kept in sync — do not "fix" them as part of the audit.
 

@@ -27,6 +27,25 @@ install -m644 "$SCRIPT_DIR/share/ai-sandbox/config.example.yaml" "$DATA_DIR/conf
 # data dir (like git-wrapper) and is referenced by absolute path there.
 install -m755 "$SCRIPT_DIR/share/ai-sandbox/playwright-mcp" "$DATA_DIR/playwright-mcp"
 
+# Shell completions (bash + zsh). Authoritative copies live in the data dir;
+# the shell-specific dirs place them where bash-completion / zsh compinit look
+# automatically (for standard prefixes). No user rc files are modified.
+mkdir -p "$DATA_DIR/completions"
+install -m644 "$SCRIPT_DIR/share/ai-sandbox/completions/ai-sandbox.bash" "$DATA_DIR/completions/ai-sandbox.bash"
+install -m644 "$SCRIPT_DIR/share/ai-sandbox/completions/_ai-sandbox" "$DATA_DIR/completions/_ai-sandbox"
+
+# bash-completion: one file per command name (the loader matches by name), so
+# the aliases are symlinks, mirroring the $BIN_DIR layout.
+mkdir -p "$PREFIX/share/bash-completion/completions"
+install -m644 "$SCRIPT_DIR/share/ai-sandbox/completions/ai-sandbox.bash" "$PREFIX/share/bash-completion/completions/ai-sandbox"
+for _c in asb asb-claude asb-codex asb-opencode; do
+    ln -sf ai-sandbox "$PREFIX/share/bash-completion/completions/$_c"
+done
+
+# zsh: a single _ai-sandbox function with a #compdef line covers every name.
+mkdir -p "$PREFIX/share/zsh/site-functions"
+install -m644 "$SCRIPT_DIR/share/ai-sandbox/completions/_ai-sandbox" "$PREFIX/share/zsh/site-functions/_ai-sandbox"
+
 # Install the systemd user unit for the host-side Playwright MCP browser service
 # into the standard per-user unit directory (already on the systemd user search
 # path), so enabling is just `systemctl --user enable --now`. Fill in the
@@ -43,3 +62,7 @@ echo "Enable the browser service (optional, once):"
 echo "  systemctl --user daemon-reload && systemctl --user enable --now ai-sandbox-playwright"
 
 echo "Done. Make sure $BIN_DIR is in your PATH."
+echo "Shell completion: bash-completion/zsh pick up the files in"
+echo "  $PREFIX/share/bash-completion/completions and $PREFIX/share/zsh/site-functions"
+echo "  automatically. If your shell does not, source or add to fpath the copies in"
+echo "  $DATA_DIR/completions (see README)."

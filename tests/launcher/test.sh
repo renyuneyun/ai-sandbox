@@ -1160,5 +1160,31 @@ static_err=$(SANDBOX_PROGRESS=true run_launcher_stderr "$CAPTURE_DIR_STATIC" "$S
     ok "progress: launching line on stderr" ||
     bad "progress: launching line on stderr (got '$static_err')"
 
+# --- Shell completion (bash) test ---
+COMPLETION_FILE="$SCRIPT_DIR/../../share/ai-sandbox/completions/ai-sandbox.bash"
+if [[ -s "$COMPLETION_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$COMPLETION_FILE" 2>/dev/null
+    if declare -F _ai_sandbox >/dev/null; then
+        COMP_WORDS=("ai-sandbox" "--tool" ""); COMP_CWORD=2
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *claude* && "$COMPLETION_JOINED" == *codex* && "$COMPLETION_JOINED" == *opencode* ]] &&
+          ok "completion: --tool completes tool names" ||
+          bad "completion: --tool completes tool names ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" "--"); COMP_CWORD=1
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *"--tool"* && "$COMPLETION_JOINED" == *"--allow-local-git"* && "$COMPLETION_JOINED" == *"--help"* ]] &&
+          ok "completion: options included in flag completion" ||
+          bad "completion: options included in flag completion ($COMPLETION_JOINED)"
+    else
+        bad "completion: _ai_sandbox function exists"
+    fi
+else
+    bad "completion: bash completion file exists"
+fi
+
 echo "$pass passed, $fail failed"
 [[ $fail -eq 0 ]]
