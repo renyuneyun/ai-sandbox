@@ -146,6 +146,33 @@ if command -v yq >/dev/null 2>&1; then
     assert_eq "select: user fills workspace gap" "claude" "$(resolve_tool "")"
 fi
 
+# --- --help / print_help tests ---
+if declare -F print_help >/dev/null; then
+    ok "help: print_help function exists outside main guard"
+else
+    bad "help: print_help function exists outside main guard"
+fi
+
+HELP_OUT="$(print_help)"
+[[ "$HELP_OUT" == *"USAGE:"* && "$HELP_OUT" == *"--tool"* && "$HELP_OUT" == *"--allow-local-git"* ]] &&
+  ok "help: print_help includes usage and options" ||
+  bad "help: print_help includes usage and options"
+[[ "$HELP_OUT" == *"--help"* && "$HELP_OUT" == *"--version"* ]] &&
+  ok "help: print_help lists --help and --version" ||
+  bad "help: print_help lists --help and --version"
+
+# --help must print usage on stdout, exit 0, and never reach docker.
+HELP_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$HELP_DIR")
+mkdir -p "$HELP_DIR/bin" "$HELP_DIR/home"
+printf '#!/bin/sh\n: > "$DOCKER_CAPTURE"\n' > "$HELP_DIR/bin/docker"
+chmod +x "$HELP_DIR/bin/docker"
+help_code=0
+help_out=$(DOCKER_CAPTURE="$HELP_DIR/called" HOME="$HELP_DIR/home" PATH="$HELP_DIR/bin:$PATH" bash "$LAUNCHER" --help 2>&1) || help_code=$?
+[[ $help_code -eq 0 && "$help_out" == *"USAGE:"* && ! -e "$HELP_DIR/called" ]] &&
+  ok "help: --help prints usage, exits 0, skips docker" ||
+  bad "help: --help prints usage, exits 0, skips docker (code=$help_code)"
+
 # --- resolve_allow_local tests ---
 # Follows the resolve_tool pattern: CLI value wins, else resolve() from env/config/default.
 

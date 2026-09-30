@@ -69,6 +69,49 @@ launcher_error() {
   return 2
 }
 
+# Print the CLI usage reference. Kept outside the main guard for testability,
+# and as the single source of truth for the launcher's own options — keep it in
+# sync with the shell completion files when options/tools/aliases change (see
+# docs/development.md "Keeping docs in sync").
+print_help() {
+  cat <<'EOF'
+ai-sandbox - run a coding agent (Claude Code, Codex, or OpenCode) inside a Docker sandbox
+
+USAGE:
+  ai-sandbox [OPTIONS] [WORKSPACE] [-- TOOL_ARGS...]
+
+OPTIONS:
+  --tool <claude|codex|opencode>  Which tool to run (default: claude). Append
+                                  @version to pin it, e.g. --tool opencode@2.5.0.
+  --allow-local-git                Block only git push; allow other local git
+                                  operations (the git local-override mode).
+  -h, --help                       Show this help and exit.
+  -V, --version                    Show the version and exit.
+
+ARGUMENTS:
+  WORKSPACE   Directory to sandbox (defaults to the current directory).
+  --          Everything after -- is passed unchanged to the selected tool.
+
+ALIASES:
+  ai-sandbox                uses normal tool precedence
+  asb                       alias for ai-sandbox
+  asb-claude / asb-codex /  alias for ai-sandbox --tool <name>
+  asb-opencode
+
+EXAMPLES:
+  ai-sandbox
+  ai-sandbox --tool codex
+  ai-sandbox --tool opencode@v2.5.0 ~/my-project
+  ai-sandbox ~/my-project -- --resume
+  asb-codex -- --model gpt-5.4
+
+CONFIGURATION:
+  Per-project:   $WORKSPACE_DIR/.ai-sandbox.yaml
+  User defaults: ${XDG_CONFIG_HOME:-~/.config}/ai-sandbox/config.yaml
+  See docs/configuration.md for the full schema.
+EOF
+}
+
 # --- Startup progress ---
 # One-line progress display on stderr covering the whole "prepare" phase
 # (config resolution, host version detection, mount detection, tool package
@@ -584,6 +627,11 @@ esac
 
 if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
     echo "ai-sandbox $VERSION"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    print_help
     exit 0
 fi
 

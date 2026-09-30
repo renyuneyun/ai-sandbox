@@ -52,7 +52,11 @@ asb-codex ~/projects/my-app -- --model gpt-5.4
 ai-sandbox --tool opencode
 ai-sandbox --tool opencode@v1.29.11          # pin a specific tool version
 ai-sandbox ~/projects/my-app -- --resume
+ai-sandbox --help         # full usage reference (options, aliases, examples)
+ai-sandbox --version
 ```
+
+Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool.
 
 Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
