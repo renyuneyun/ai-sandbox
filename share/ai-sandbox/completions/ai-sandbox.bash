@@ -17,7 +17,27 @@ _ai_sandbox() {
             COMPREPLY=($(compgen -W "claude codex opencode" -- "$cur"))
             return 0
             ;;
+        serve)
+            COMPREPLY=($(compgen -W "start stop attach" -- "$cur"))
+            return 0
+            ;;
+        --hostname)
+            COMPREPLY=($(compgen -W "all lo" -- "$cur"))
+            return 0
+            ;;
+        --port)
+            return 0
+            ;;
     esac
+
+    if [[ "${COMP_WORDS[1]:-}" == serve ]]; then
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=($(compgen -W "--tool --hostname --port --headless --allow-local-git" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -d -- "$cur"))
+        fi
+        return 0
+    fi
 
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "--help -h --version -V --tool --allow-local-git --" -- "$cur"))
@@ -25,7 +45,7 @@ _ai_sandbox() {
     fi
 
     # The optional workspace argument: complete directories.
-    COMPREPLY=($(compgen -d -- "$cur"))
+    COMPREPLY=($(compgen -W "serve" -- "$cur") $(compgen -d -- "$cur"))
     return 0
 }
 

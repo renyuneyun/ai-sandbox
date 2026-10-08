@@ -4,6 +4,17 @@
 # docs/development.md).
 
 _ai-sandbox() {
+    if [[ "${words[2]:-}" == serve ]]; then
+        _arguments -s -S \
+            '2:action:(start stop attach)' \
+            '--tool=[Select the tool]:tool:(opencode)' \
+            '--hostname=[Server listen address]:address:(all lo)' \
+            '--port=[Server port]:port:' \
+            '--headless[Run API server without web UI]' \
+            '--allow-local-git[Block only git push]' \
+            '*:workspace:_files -/'
+        return
+    fi
     local -a opts
     opts=(
         '(-h --help)'{-h,--help}'[Show help]'
@@ -14,6 +25,9 @@ _ai-sandbox() {
     _arguments -s -S $opts \
         '1:workspace:_files -/' \
         '*::tool arg:'
+    if (( CURRENT == 2 )); then
+        compadd serve
+    fi
 }
 
 _ai-sandbox "$@"
