@@ -171,7 +171,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
     - [x] **Automatic cleanup** - the container is removed on exit
     - [x] **Additional mountpoints** - Additional paths to mount into the container
         - [x] Manual list (`mounts.extra`; read-only by default, e.g. CC Switch's own settings directory)
-        - [x] Automatic-sensing for known cases: linked git worktree / submodule git-dir and its common git dir (objects/refs) (`mounts.auto.git_worktree`) and config symlinks that point outside the mounted roots (`mounts.auto.symlinks`)
+        - [x] Automatic-sensing for known cases: linked git worktree / submodule git-dir and its common git dir (objects/refs) (`mounts.auto.git_worktree`) and config-dir or workspace symlinks that point outside their mounted roots (`mounts.auto.symlinks`)
         - [ ] General intelligent-sensing beyond those cases
     - [ ] **Safe passthrough** - safely passthrough files and folders between host and sandbox, such as package caches
 - [x] **Parallel sessions** - each invocation runs as an independent one-shot container, so multiple sandboxed sessions can run concurrently
@@ -191,7 +191,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
     - [x] **Claude version** - pin Claude Code version via `claude.version`
     - [x] **Claude config passthrough** - toggle `~/.claude` mount via `claude.config_passthrough`
     - [x] **Cleanup** - toggle cleanup container via `sandbox.cleanup`
-    - [x] **Additional paths** - mount arbitrary host paths via `mounts.extra` and auto-detect a linked worktree's git-dir + common git dir and out-of-tree config symlinks via `mounts.auto`
+    - [x] **Additional paths** - mount arbitrary host paths via `mounts.extra` and auto-detect a linked worktree's git-dir + common git dir and out-of-tree config/workspace symlinks via `mounts.auto`
 - [x] **Alternative Claude config and env** - use dedicated Claude config paths, disable config passthrough, or authenticate with `ANTHROPIC_API_KEY`
 - [ ] **Network isolation** - container has its own network, isolated from the host
 - [x] **More tools** - first-class Claude Code, Codex CLI, and OpenCode profiles

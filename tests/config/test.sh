@@ -665,8 +665,8 @@ else
     bad "resolve: mounts.enabled workspace false (got '$result')"
 fi
 
-# Test: resolve - mounts.auto defaults to true
-unset SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS
+# Test: resolve - mounts.auto.git_worktree defaults to true
+unset SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS SANDBOX_AUTO_SYMLINKS_CONFIG SANDBOX_AUTO_SYMLINKS_DEPTH
 WORKSPACE_CONFIG="$TMPDIR/nonexistent.yaml"
 USER_CONFIG="$TMPDIR/nonexistent.yaml"
 WORKSPACE_CONFIG_VALID=false
@@ -677,14 +677,98 @@ if [[ "$result" == "true" ]]; then
 else
     bad "resolve: mounts.auto.git_worktree default (got '$result')"
 fi
-result=$(resolve SANDBOX_AUTO_SYMLINKS .mounts.auto.symlinks true)
-if [[ "$result" == "true" ]]; then
-    ok "resolve: mounts.auto.symlinks default true"
-else
-    bad "resolve: mounts.auto.symlinks default (got '$result')"
-fi
 
-# Test: resolve - mounts.auto workspace values win (no env)
+# --- resolve_symlinks tests (polymorphic mounts.auto.symlinks) ---
+# resolve_symlinks normalizes the node (bool | int | {config, workspace} map)
+# into two globals: SYMLINKS_CONFIG_ENABLED + SYMLINKS_WORKSPACE_DEPTH (0 = off).
+symlinks_state() { echo "${SYMLINKS_CONFIG_ENABLED:-}:${SYMLINKS_WORKSPACE_DEPTH:-}"; }
+check_symlinks() {  # NAME EXPECTED_CONFIG EXPECTED_DEPTH
+    local expected="$2:$3"
+    if [[ "$(symlinks_state)" == "$expected" ]]; then
+        ok "resolve_symlinks: $1"
+    else
+        bad "resolve_symlinks: $1 (expected '$expected', got '$(symlinks_state)')"
+    fi
+}
+
+# defaults (no config): config on + workspace depth 3
+resolve_symlinks
+check_symlinks "defaults config on + depth 3" true 3
+
+# symlinks: false -> everything off
+printf 'mounts:\n  auto:\n    symlinks: false\n' > "$TMPDIR/sl-false.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-false.yaml"
+WORKSPACE_CONFIG_VALID=true
+resolve_symlinks
+check_symlinks "false disables all" false 0
+
+# symlinks: true -> config on + default depth 3
+printf 'mounts:\n  auto:\n    symlinks: true\n' > "$TMPDIR/sl-true.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-true.yaml"
+resolve_symlinks
+check_symlinks "true enables all at default depth" true 3
+
+# symlinks: 0 -> config on, workspace off
+printf 'mounts:\n  auto:\n    symlinks: 0\n' > "$TMPDIR/sl-0.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-0.yaml"
+resolve_symlinks
+check_symlinks "0 keeps config on, workspace off" true 0
+
+# symlinks: 5 -> config on, workspace depth 5
+printf 'mounts:\n  auto:\n    symlinks: 5\n' > "$TMPDIR/sl-5.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-5.yaml"
+resolve_symlinks
+check_symlinks "int sets workspace depth" true 5
+
+# symlinks map {config:false} -> config off, workspace default depth 3
+printf 'mounts:\n  auto:\n    symlinks:\n      config: false\n' > "$TMPDIR/sl-cfg.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-cfg.yaml"
+resolve_symlinks
+check_symlinks "map config only (workspace defaults)" false 3
+
+# symlinks map {workspace:5} -> config on, depth 5
+printf 'mounts:\n  auto:\n    symlinks:\n      workspace: 5\n' > "$TMPDIR/sl-ws.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-ws.yaml"
+resolve_symlinks
+check_symlinks "map workspace int" true 5
+
+# symlinks map {workspace:false} -> workspace off, config on
+printf 'mounts:\n  auto:\n    symlinks:\n      workspace: false\n' > "$TMPDIR/sl-ws0.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-ws0.yaml"
+resolve_symlinks
+check_symlinks "map workspace false" true 0
+
+# workspace config beats user config (whole-node precedence)
+printf 'mounts:\n  auto:\n    symlinks: 7\n' > "$TMPDIR/sl-ws-win.yaml"
+printf 'mounts:\n  auto:\n    symlinks: 2\n' > "$TMPDIR/sl-user.yaml"
+WORKSPACE_CONFIG="$TMPDIR/sl-ws-win.yaml"
+USER_CONFIG="$TMPDIR/sl-user.yaml"
+WORKSPACE_CONFIG_VALID=true
+USER_CONFIG_VALID=true
+resolve_symlinks
+check_symlinks "workspace beats user" true 7
+
+# env shorthand SANDBOX_AUTO_SYMLINKS=false beats config
+SANDBOX_AUTO_SYMLINKS=false
+resolve_symlinks
+check_symlinks "env shorthand false beats config" false 0
+unset SANDBOX_AUTO_SYMLINKS
+
+# env shorthand SANDBOX_AUTO_SYMLINKS=3 (int)
+SANDBOX_AUTO_SYMLINKS=3
+resolve_symlinks
+check_symlinks "env int shorthand" true 3
+unset SANDBOX_AUTO_SYMLINKS
+
+# specific env overrides win over the shorthand
+SANDBOX_AUTO_SYMLINKS=true
+SANDBOX_AUTO_SYMLINKS_DEPTH=9
+SANDBOX_AUTO_SYMLINKS_CONFIG=false
+resolve_symlinks
+check_symlinks "specific env overrides shorthand" false 9
+unset SANDBOX_AUTO_SYMLINKS SANDBOX_AUTO_SYMLINKS_CONFIG SANDBOX_AUTO_SYMLINKS_DEPTH
+
+# git_worktree workspace value wins (no env) — unchanged knob sanity
 WORKSPACE_CONFIG="$TMPDIR/mounts-workspace.yaml"
 USER_CONFIG="$TMPDIR/nonexistent.yaml"
 WORKSPACE_CONFIG_VALID=true
@@ -695,14 +779,8 @@ if [[ "$result" == "false" ]]; then
 else
     bad "resolve: mounts.auto.git_worktree workspace false (got '$result')"
 fi
-result=$(resolve SANDBOX_AUTO_SYMLINKS .mounts.auto.symlinks true)
-if [[ "$result" == "false" ]]; then
-    ok "resolve: mounts.auto.symlinks workspace false wins"
-else
-    bad "resolve: mounts.auto.symlinks workspace false (got '$result')"
-fi
 
-# Test: resolve - env var beats workspace for auto keys
+# git_worktree env beats workspace
 SANDBOX_AUTO_GIT_WORKTREE=true
 result=$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)
 if [[ "$result" == "true" ]]; then
@@ -710,7 +788,12 @@ if [[ "$result" == "true" ]]; then
 else
     bad "resolve: mounts.auto.git_worktree env (got '$result')"
 fi
-unset SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS
+unset SANDBOX_AUTO_GIT_WORKTREE
+
+WORKSPACE_CONFIG="$TMPDIR/nonexistent.yaml"
+USER_CONFIG="$TMPDIR/nonexistent.yaml"
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=false
 
 # --- resolve tests for claude.config_dir and claude.config_file ---
 

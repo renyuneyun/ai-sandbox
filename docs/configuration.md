@@ -63,7 +63,7 @@ mounts:
     - "~/.cache/npm:/home/user/.cache/npm:rw"
   auto:
     git_worktree: true          # bool,    default: true - mount a linked worktree/submodule git-dir + common git dir
-    symlinks: true              # bool,    default: true - mount config symlink targets that point outside
+    symlinks: true              # bool|int|map, default: config on + workspace depth 3 - see "Automatic mount detection"
 
 browser:
   enabled: true                 # bool,    default: false - drive a visible host browser
@@ -280,19 +280,31 @@ SANDBOX_EXTRA_MOUNTS=$'~/.config/cc-switch\n~/.cache/npm:/home/user/.cache/npm:r
 
 ## Automatic mount detection
 
-Beyond the explicit `mounts.extra` list, the launcher can **auto-detect** paths the selected agent needs and mount them too. These only trigger when the situation actually exists, so the result mirrors how the agent would run on the host. Both detectors default to `true` and only fire when their precondition holds.
+Beyond the explicit `mounts.extra` list, the launcher can **auto-detect** paths the selected agent needs and mount them too. These only trigger when the situation actually exists, so the result mirrors how the agent would run on the host. `git_worktree` defaults to `true`; `symlinks` defaults to on (both of its sub-scans).
 
 ```yaml
 mounts:
   auto:
     git_worktree: true   # default true
-    symlinks: true       # default true
+    symlinks: true       # default: config scan on + workspace scan at depth 3
 ```
 
 - **`git_worktree`** — When the workspace is a *linked git worktree* or a *git submodule*, its `.git` is a file containing a `gitdir: <path>` line pointing to the worktree's git-dir, which lives inside the main worktree / superproject and therefore **outside** the workspace mount. That git-dir (`<repo>/.git/worktrees/<name>`, holding the worktree's `HEAD`/index) only sits on top of the real object store, so the launcher also mounts the **common git dir** (`<repo>/.git`, holding `objects`/`refs`/`config`) and the git-dir itself, both read-write at the same paths, so git works (checkout/status/commit) exactly as on the host. For a *submodule* the git-dir (`<repo>/.git/modules/<name>`) is itself the common dir, so just that one path is mounted. In a normal main-worktree checkout `.git` is already inside the workspace, so nothing is mounted.
-- **`symlinks`** — A bind mount of a config dir keeps any symlink it contains as an *unresolved* symlink inside the container, so a skill shared from elsewhere (`~/code/myskill` not under `~/.claude`) would be a dangling link. The launcher scans the selected tool's mounted config dir(s) (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode` — only those whose passthrough is enabled) for symlinks whose canonical target lies outside those roots, and mounts each such target read-only at its own path so the symlink resolves as on the host.
+- **`symlinks`** — A bind mount keeps any symlink it contains as an *unresolved* symlink inside the container, so a link whose target lies outside the mounted root dangles. The launcher mounts each such out-of-root target read-only at its own path so the link resolves as on the host. Two sub-scans share this behavior and are gated independently:
 
-Environment overrides follow normal precedence: `SANDBOX_AUTO_GIT_WORKTREE` and `SANDBOX_AUTO_SYMLINKS`. The master `mounts.enabled` / `SANDBOX_EXTRA_MOUNTS_ENABLED` switch disables **all** extra and auto mounts.
+  - **`config`** *(default `true`)* — the original behavior. Scans the selected tool's mounted config dir(s) (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode` — only those whose passthrough is enabled) for symlinks whose canonical target lies outside those roots, so e.g. a skill shared from `~/code/myskill` (not under `~/.claude`) resolves instead of dangling.
+  - **`workspace`** *(default depth `3`)* — scans the workspace itself (the dir bound at `$WORKSPACE_DIR`, already mounted whole) for symlinks whose canonical target lies **outside** it (a sibling repo, `/mnt/...`, a caches dir, …). A link pointing *inside* the workspace is skipped because the whole-workspace bind already makes it resolve. The scan descends only `find -maxdepth <depth>` levels for cost; `depth 0` is off, matching `find -maxdepth 0` exactly (nothing is scanned).
+
+  The `symlinks:` node is polymorphic; every form normalizes to the same two knobs:
+
+  | Form | Result |
+  |---|---|
+  | `symlinks: true` | config on + workspace at default depth (`3`) |
+  | `symlinks: false` | both off |
+  | `symlinks: N` | config on + workspace depth `N` (`0` = workspace off, config stays on) |
+  | `symlinks: {config: <bool>, workspace: <true\|false\|N>}` | per-knob; `workspace: true` = default depth, `false` = `0` = off |
+
+Environment overrides follow normal precedence and stay flat: `SANDBOX_AUTO_GIT_WORKTREE` (bool) for git worktrees; `SANDBOX_AUTO_SYMLINKS` (bool or int — the `true|false|N` shorthand, which keeps the old boolean's meaning) plus `SANDBOX_AUTO_SYMLINKS_CONFIG` (bool) and `SANDBOX_AUTO_SYMLINKS_DEPTH` (int) for the two knobs individually, the specific ones winning over the shorthand. The master `mounts.enabled` / `SANDBOX_EXTRA_MOUNTS_ENABLED` switch disables **all** extra and auto mounts.
 
 ## Browser (automation of a visible host browser)
 

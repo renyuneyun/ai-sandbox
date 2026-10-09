@@ -653,6 +653,7 @@ reset_auto_mounts() {
     SANDBOX_EXTRA_MOUNTS_ENABLED=true
     SANDBOX_AUTO_GIT_WORKTREE=true
     SANDBOX_AUTO_SYMLINKS=true
+    unset SANDBOX_AUTO_SYMLINKS_CONFIG SANDBOX_AUTO_SYMLINKS_DEPTH
     AUTO_MOUNTED_CONTS=()
     AUTO_SYMLINK_ROOTS=()
     EXTRA_MOUNT_VOLUME_ARGS=()
@@ -767,6 +768,42 @@ CLAUDE_CONFIG_PASSTHROUGH=false
 configure_auto_mounts
 assert_eq "auto symlink: passthrough off scans nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
 
+# workspace symlink auto-detect (mounts.auto.symlinks.workspace): a symlink inside
+# the workspace pointing OUTSIDE it is mounted ro; a symlink pointing INSIDE is
+# skipped (already resolved by the whole-workspace bind mount); -maxdepth bounds
+# how deep the scan descends, and depth 0 turns the workspace scan off entirely.
+unset SELECTED_TOOL CLAUDE_CONFIG_DIR CLAUDE_CONFIG_PASSTHROUGH
+AUTO_WS_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_WS_DIR")
+WORKSPACE_DIR="$AUTO_WS_DIR/ws"
+mkdir -p "$WORKSPACE_DIR/inside" "$WORKSPACE_DIR/nested" "$AUTO_WS_DIR/outside"
+ln -s "$AUTO_WS_DIR/outside"  "$WORKSPACE_DIR/link-out"
+ln -s "$WORKSPACE_DIR/inside" "$WORKSPACE_DIR/link-in"
+ln -s "$AUTO_WS_DIR/outside"  "$WORKSPACE_DIR/nested/link-deep"
+
+reset_auto_mounts
+SANDBOX_AUTO_SYMLINKS_DEPTH=1
+configure_auto_mounts
+assert_eq "auto ws: external target mounted ro" "$AUTO_WS_DIR/outside:$AUTO_WS_DIR/outside:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "auto ws: internal + beyond-depth links skipped" "2" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
+# workspace depth 0 disables the workspace scan
+reset_auto_mounts
+SANDBOX_AUTO_SYMLINKS_DEPTH=0
+configure_auto_mounts
+assert_eq "auto ws: depth 0 scans nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+unset SANDBOX_AUTO_SYMLINKS_DEPTH
+
+# workspace symlink whose target does not exist is skipped (no crash)
+AUTO_WS_BROKEN="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$AUTO_WS_BROKEN")
+WORKSPACE_DIR="$AUTO_WS_BROKEN/ws"
+mkdir -p "$WORKSPACE_DIR"
+ln -s "$AUTO_WS_BROKEN/does-not-exist" "$WORKSPACE_DIR/broken-link"
+reset_auto_mounts
+configure_auto_mounts
+assert_eq "auto ws: dangling target skipped" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+
 # auto disabled entirely via global switch
 AUTO_OFF_DIR="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$AUTO_OFF_DIR")
@@ -777,7 +814,7 @@ reset_auto_mounts
 SANDBOX_EXTRA_MOUNTS_ENABLED=false
 configure_auto_mounts
 assert_eq "auto: global mounted.enabled=false disables all" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
-unset SELECTED_TOOL CLAUDE_CONFIG_DIR CLAUDE_CONFIG_PASSTHROUGH SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS SANDBOX_EXTRA_MOUNTS_ENABLED
+unset SELECTED_TOOL CLAUDE_CONFIG_DIR CLAUDE_CONFIG_PASSTHROUGH SANDBOX_AUTO_GIT_WORKTREE SANDBOX_AUTO_SYMLINKS SANDBOX_AUTO_SYMLINKS_CONFIG SANDBOX_AUTO_SYMLINKS_DEPTH SANDBOX_EXTRA_MOUNTS_ENABLED
 
 # Auto-detected mounts reach docker compose run (default tool = claude)
 AUTO_INT="$(mktemp -d)"

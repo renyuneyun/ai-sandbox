@@ -617,6 +617,41 @@ detect_symlink_mounts() {
   return 0
 }
 
+# Workspace symlink auto-detect. The workspace is bind-mounted whole, so a
+# symlink inside it that points WITHIN the workspace already resolves; but one
+# pointing OUTSIDE it (a sibling repo, /mnt/...) dangles inside the sandbox.
+# Mount such targets read-only at their own path, mirroring detect_symlink_mounts.
+# Scans only to -maxdepth <depth>; depth 0 => off.
+detect_workspace_symlink_mounts() {  # DEPTH
+  local depth="$1" link target t
+  [[ "$depth" =~ ^[0-9]+$ && "$depth" -gt 0 ]] || return 0
+  while IFS= read -r -d '' link; do
+    target="$(readlink "$link")" || continue
+    if [[ "$target" == /* ]]; then
+      t="$target"
+    else
+      t="$(dirname "$link")/$target"
+    fi
+    t="$(canonicalize "$t")"
+    [[ -e "$t" ]] || continue
+    # Skip targets already inside the workspace (resolved by the workspace mount).
+    case "$t" in
+      "$WORKSPACE_DIR"|"$WORKSPACE_DIR"/*) continue ;;
+    esac
+    # Skip targets inside a mounted config root (mounted rw by the tool profile).
+    local inside=0 other
+    for other in "${AUTO_SYMLINK_ROOTS[@]:-}"; do
+      [[ -n "$other" ]] || continue
+      case "$t" in
+        "$other"|"$other"/*) inside=1; break ;;
+      esac
+    done
+    [[ "$inside" -eq 1 ]] && continue
+    _auto_add_mount "$t" "$t" "ro"
+  done < <(find "$WORKSPACE_DIR" -maxdepth "$depth" -type l -print0 2>/dev/null)
+  return 0
+}
+
 # Populate AUTO_SYMLINK_ROOTS from the selected tool's mounted config dirs.
 # Only roots whose passthrough is enabled are scanned (a disabled, unmounted
 # config dir is irrelevant).
@@ -644,6 +679,79 @@ _init_symlink_roots() {
   esac
 }
 
+# Resolve the polymorphic mounts.auto.symlinks knob into two normalized globals:
+#   SYMLINKS_CONFIG_ENABLED   (true|false) — config-dir / skills symlink detection
+#   SYMLINKS_WORKSPACE_DEPTH  (integer)    — find -maxdepth for workspace symlinks; 0 = off
+# The YAML node may be a bool (shorthand for both knobs), an int (workspace depth,
+# config stays on), or a {config, workspace} map. Env overrides, most-specific-wins:
+#   SANDBOX_AUTO_SYMLINKS          bool|int shorthand (keeps the old bool's meaning)
+#   SANDBOX_AUTO_SYMLINKS_CONFIG   bool
+#   SANDBOX_AUTO_SYMLINKS_DEPTH    int
+resolve_symlinks() {
+    local file="" raw
+    SYMLINKS_CONFIG_ENABLED=true
+    SYMLINKS_WORKSPACE_DEPTH=3
+
+    # YAML: whole-node precedence — workspace config beats user config.
+    if [[ "${WORKSPACE_CONFIG_VALID:-}" == "true" ]]; then
+        raw=$(yq -r '.mounts.auto.symlinks' "${WORKSPACE_CONFIG:-}" 2>/dev/null) || raw=""
+        [[ -n "$raw" && "$raw" != "null" ]] && file="${WORKSPACE_CONFIG}"
+    fi
+    if [[ -z "$file" && "${USER_CONFIG_VALID:-}" == "true" ]]; then
+        raw=$(yq -r '.mounts.auto.symlinks' "${USER_CONFIG:-}" 2>/dev/null) || raw=""
+        [[ -n "$raw" && "$raw" != "null" ]] && file="${USER_CONFIG}"
+    fi
+    [[ -n "$file" ]] && _normalize_symlinks_node "$file"
+
+    # Env shorthand (bool or int).
+    if [[ -n "${SANDBOX_AUTO_SYMLINKS:-}" ]]; then
+        case "${SANDBOX_AUTO_SYMLINKS}" in
+            true)  SYMLINKS_CONFIG_ENABLED=true;  SYMLINKS_WORKSPACE_DEPTH=3 ;;
+            false) SYMLINKS_CONFIG_ENABLED=false; SYMLINKS_WORKSPACE_DEPTH=0 ;;
+            *[!0-9]*)
+                warn_msg "invalid SANDBOX_AUTO_SYMLINKS '${SANDBOX_AUTO_SYMLINKS}'"
+                SYMLINKS_CONFIG_ENABLED=false
+                SYMLINKS_WORKSPACE_DEPTH=0 ;;
+            *)     SYMLINKS_CONFIG_ENABLED=true;  SYMLINKS_WORKSPACE_DEPTH="${SANDBOX_AUTO_SYMLINKS}" ;;
+        esac
+    fi
+    # Specific env overrides win over the shorthand / YAML.
+    [[ -n "${SANDBOX_AUTO_SYMLINKS_CONFIG:-}" ]] && SYMLINKS_CONFIG_ENABLED="${SANDBOX_AUTO_SYMLINKS_CONFIG}"
+    [[ -n "${SANDBOX_AUTO_SYMLINKS_DEPTH:-}" ]] && SYMLINKS_WORKSPACE_DEPTH="${SANDBOX_AUTO_SYMLINKS_DEPTH}"
+    return 0
+}
+
+# Normalize a resolved symlinks node (from FILE) into the two globals.
+_normalize_symlinks_node() {  # FILE
+    local file="$1" raw cfg ws
+    raw=$(yq -r '.mounts.auto.symlinks' "$file" 2>/dev/null) || raw=""
+    case "$raw" in
+        ""|"null") ;;
+        true)  SYMLINKS_CONFIG_ENABLED=true;  SYMLINKS_WORKSPACE_DEPTH=3 ;;
+        false) SYMLINKS_CONFIG_ENABLED=false; SYMLINKS_WORKSPACE_DEPTH=0 ;;
+        *[!0-9]*)
+            # map form: read per-knob sub-keys; null/empty keep the defaults
+            cfg=$(yq -r '.mounts.auto.symlinks.config' "$file" 2>/dev/null || true)
+            ws=$(yq -r '.mounts.auto.symlinks.workspace' "$file" 2>/dev/null || true)
+            [[ -n "$cfg" && "$cfg" != "null" ]] && SYMLINKS_CONFIG_ENABLED="$cfg"
+            [[ -n "$ws" && "$ws" != "null" ]] && _normalize_symlinks_workspace "$ws"
+            ;;
+        *)     SYMLINKS_WORKSPACE_DEPTH="$raw" ;;   # pure-integer shorthand
+    esac
+    return 0
+}
+
+# Normalize the workspace sub-knob: true (default depth), false/0 (off), or int.
+_normalize_symlinks_workspace() {  # VALUE
+    case "$1" in
+        true)  SYMLINKS_WORKSPACE_DEPTH=3 ;;
+        false) SYMLINKS_WORKSPACE_DEPTH=0 ;;
+        *[!0-9]*) warn_msg "invalid mounts.auto.symlinks.workspace '$1'" ;;
+        *)     SYMLINKS_WORKSPACE_DEPTH="$1" ;;
+    esac
+    return 0
+}
+
 # Run every enabled auto-detector, each appending any discovered mounts to
 # EXTRA_MOUNT_VOLUME_ARGS. Only triggers when the situation actually exists
 # (a linked worktree / an out-of-tree symlink), so results mirror the host.
@@ -655,9 +763,13 @@ configure_auto_mounts() {
   if [[ "$SANDBOX_AUTO_GIT_WORKTREE" == "true" ]]; then
     detect_git_worktree_mount
   fi
-  if [[ "$SANDBOX_AUTO_SYMLINKS" == "true" ]]; then
-    _init_symlink_roots
+  resolve_symlinks
+  _init_symlink_roots
+  if [[ "$SYMLINKS_CONFIG_ENABLED" == "true" ]]; then
     detect_symlink_mounts
+  fi
+  if [[ "${SYMLINKS_WORKSPACE_DEPTH:-0}" != "0" ]]; then
+    detect_workspace_symlink_mounts "$SYMLINKS_WORKSPACE_DEPTH"
   fi
   return 0
 }
@@ -764,7 +876,6 @@ configure_host_settings
 SANDBOX_EXTRA_MOUNTS="$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)"
 SANDBOX_EXTRA_MOUNTS_ENABLED="$(resolve SANDBOX_EXTRA_MOUNTS_ENABLED .mounts.enabled true)"
 SANDBOX_AUTO_GIT_WORKTREE="$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)"
-SANDBOX_AUTO_SYMLINKS="$(resolve SANDBOX_AUTO_SYMLINKS .mounts.auto.symlinks true)"
 configure_extra_mounts
 configure_auto_mounts
 
