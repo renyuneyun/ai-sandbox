@@ -344,7 +344,7 @@ The endpoint is bound to `127.0.0.1` on the host. Because the container uses hos
 
 ## Startup progress
 
-The launcher shows a single self-erasing progress line (a spinner with elapsed time on a terminal, one static `ai-sandbox: ...` line per phase otherwise) covering the whole prepare phase: config resolution, host version detection, mount detection, and a non-interactive tool package warm-up run. The warm-up fetches the selected tool package into the npm cache inside the persistent `ai-agent-home` volume, so the (potentially slow, especially first-launch) download happens under the progress line instead of silently after the interactive session starts. Warnings and errors suspend the line, print cleanly, and resume it; the line is fully erased once the tool launches.
+The launcher shows a self-erasing progress line (a spinner with elapsed time on a terminal, a static `ai-sandbox: ...` line otherwise) during preparation: config resolution, host version detection, and mount detection. It then names the selected tool package and shows Docker and npm fetch diagnostics during the non-interactive warm-up run. The warm-up fetches the package into the npm cache inside the persistent `ai-agent-home` volume before the interactive session starts. If warm-up fails, the launcher reports the failure and the interactive run retries.
 
 The warm-up container runs on **every** enabled launch — with a cached package it is quick, but it still costs one extra short-lived container start (roughly a second); the actual package download only happens on first launch or when the pinned version changes.
 

@@ -1102,7 +1102,7 @@ fi
 # --- Cache warm-up integration ---
 # With progress enabled (the default) the launcher performs one non-interactive
 # warm-up invocation (npx <pkg> --version) before the interactive run so the
-# tool download happens under the spinner instead of silently in the TUI.
+# tool download reports its activity before the interactive TUI starts.
 
 CAPTURE_DIR_WARM="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_WARM")
@@ -1133,8 +1133,8 @@ INTERACTIVE_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
     ok "warm-up: interactive args preserved" ||
     bad "warm-up: interactive args preserved ($INTERACTIVE_JOINED)"
 
-# Warm-up output must be discarded (no npm noise in the launcher's stderr) and
-# a failing warm-up must not abort the launcher.
+# Warm-up diagnostics must reach the user, and a failing warm-up must not
+# abort the launcher.
 CAPTURE_DIR_WARMFAIL="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_WARMFAIL")
 mkdir -p "$CAPTURE_DIR_WARMFAIL/bin"
@@ -1161,10 +1161,23 @@ run_captured_launcher "$CAPTURE_DIR_WARMFAIL" --tool codex "$SCRIPT_DIR/../.." |
 assert_eq "warm-up: failure does not abort launcher" "0" "$warmfail_code"
 assert_eq "warm-up: interactive still invoked after failure" "2" "$(cat "$CAPTURE_DIR_WARMFAIL/docker.args.count")"
 if grep -q "WARMUP_STDERR_MARKER" "$CAPTURE_DIR_WARMFAIL/launcher.stderr"; then
-    bad "warm-up: stderr output is discarded"
+    ok "warm-up: stderr diagnostics are visible"
 else
-    ok "warm-up: stderr output is discarded"
+    bad "warm-up: stderr diagnostics are visible"
 fi
+if grep -q "@openai/codex@integration-test" "$CAPTURE_DIR_WARMFAIL/launcher.stderr"; then
+    ok "warm-up: selected package is visible"
+else
+    bad "warm-up: selected package is visible"
+fi
+if grep -q "warm-up failed (exit 1)" "$CAPTURE_DIR_WARMFAIL/launcher.stderr"; then
+    ok "warm-up: failure and retry are explained"
+else
+    bad "warm-up: failure and retry are explained"
+fi
+[[ "$WARMUP_JOINED" == *"<-e><NPM_CONFIG_LOGLEVEL=info>"* ]] &&
+    ok "warm-up: npm reports fetch activity" ||
+    bad "warm-up: npm reports fetch activity ($WARMUP_JOINED)"
 
 # A SIGINT during the warm-up (docker compose reports exit code 130) must
 # abort the launcher, not fall through to the interactive session.

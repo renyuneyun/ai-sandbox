@@ -170,7 +170,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
         - [ ] General intelligent-sensing beyond those cases
     - [ ] **Safe passthrough** - safely passthrough files and folders between host and sandbox, such as package caches
 - [x] **Parallel sessions** - each invocation runs as an independent one-shot container, so multiple sandboxed sessions can run concurrently
-- [x] **Startup progress** - a single self-erasing progress line (spinner with elapsed time on a terminal, static lines otherwise) covers config resolution, mount detection, and a tool package cache warm-up run, so the slow first-launch download is visible instead of looking like a hang; disable with `progress.enabled: false` / `SANDBOX_PROGRESS=false`
+- [x] **Startup progress** - a self-erasing spinner covers preparation; tool package warm-up names the package and shows Docker/npm fetch diagnostics so a slow first launch has useful detail; disable with `progress.enabled: false` / `SANDBOX_PROGRESS=false`
 - [x] **Pinnable Claude version** - set `CLAUDE_VERSION` to lock a specific Claude Code release inside the container
 - [x] **Automated tests** - host-side test suites cover the launcher, config resolution, the git wrapper, and the host browser-service wrapper
     - [x] **Launcher and profile tests** - argument parsing, tool selection, version detection, profile configuration, exact argument passthrough, and startup progress
