@@ -8,14 +8,14 @@
 4. The profile chooses its npm package, host-derived or pinned version, autonomy flag, optional API key, and read/write config binds.
 5. The launcher assembles conditional read-only git-config binds, identity overrides, and an optional generated read-only policy bind.
 6. When startup progress is enabled (the default), it first runs a non-interactive warm-up container (`npx <package> --version`) that fetches the tool package into the npm cache inside the `ai-agent-home` volume. A self-erasing progress line covers preparation; the warm-up then names the package and shows Docker and npm diagnostics. A failed warm-up is reported and the interactive run retries as before.
-7. In normal mode it runs `docker compose run --rm`, starting a fresh `ai-agent` container in the per-UID Compose project; with the cache warm, `npx` starts the selected agent from cache. `serve start` instead runs an OpenCode v1 web server in a named detached container, while `serve attach` and `serve stop` target that container.
+7. In normal mode it runs `docker compose run --rm`, starting a fresh `ai-agent` container in the per-UID Compose project; with the cache warm, `npx` starts the selected agent from cache. `serve start` instead runs an OpenCode (v1 or v2) server in a named detached container, while `serve attach` and `serve stop` target that container.
 8. The root entrypoint creates the mirrored user/group when needed, configures push protection, drops privileges, and execs the selected coding agent.
 9. The selected coding agent works in the bind-mounted workspace under the git wrapper policy. Normal interactive containers are removed on exit; a detached server container is removed by `serve stop`. Named volumes persist.
 10. When enabled and applicable, a one-shot `cleanup` container removes empty mount-point parent stubs; the generated policy file is removed by the launcher exit trap.
 
 Claude receives `--dangerously-skip-permissions`; Codex receives `--dangerously-bypass-approvals-and-sandbox`. The container limits the blast radius while the selected coding agent operates autonomously.
 
-Multiple sessions can run in parallel. Per-user project naming (`ai-sandbox-${SANDBOX_UID}`) isolates different host UIDs; Claude and Codex sessions for one UID share the same `ai-agent-home` named volume. An OpenCode v1 server is named by UID and workspace path. Generated policy and MCP mount files for a detached server remain in the user's state directory until `serve stop` removes them.
+Multiple sessions can run in parallel. Per-user project naming (`ai-sandbox-${SANDBOX_UID}`) isolates different host UIDs; Claude and Codex sessions for one UID share the same `ai-agent-home` named volume. An OpenCode server is named by UID and workspace path. Generated policy and MCP mount files for a detached server remain in the user's state directory until `serve stop` removes them.
 
 ## Network isolation
 

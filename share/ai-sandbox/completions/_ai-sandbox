@@ -10,7 +10,7 @@ _ai-sandbox() {
             '--tool=[Select the tool]:tool:(opencode)' \
             '--hostname=[Server listen address]:address:(all lo)' \
             '--port=[Server port]:port:' \
-            '--headless[Run API server without web UI]' \
+            '--headless[API-only server (v1 only; no-op for v2)]' \
             '--allow-local-git[Block only git push]' \
             '*:workspace:_files -/'
         return

@@ -185,7 +185,7 @@ opencode:
 
 ### OpenCode v2 concurrency
 
-The launcher passes `--standalone` to v2, so each TUI starts a private server instead of connecting to the managed background service on a fixed loopback port. It preserves the existing OpenCode config and data mounts, including the host's `~/.local/share/opencode`. Concurrent v2 launches can therefore be tried, but they still share the data store; this version of the launcher does not provide per-workspace OpenCode state isolation. `serve start|stop|attach` remains v1-only.
+The launcher passes `--standalone` to v2, so each TUI starts a private server instead of connecting to the managed background service on a fixed loopback port. It preserves the existing OpenCode config and data mounts, including the host's `~/.local/share/opencode`. Concurrent v2 launches can therefore be tried, but they still share the data store; this version of the launcher does not provide per-workspace OpenCode state isolation. `serve start|stop|attach` supports both v1 and v2: v2 runs `@opencode/cli serve` (web UI and API always on; `--headless` is accepted as a no-op), takes its password from `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD`, is health-checked at `/api/info`, attaches a TUI with `opencode --server <url>`, and links browsers/apps via `opencode pair`.
 
 ## Claude config passthrough
 

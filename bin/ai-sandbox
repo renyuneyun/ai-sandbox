@@ -88,7 +88,7 @@ OPTIONS:
                                   operations (the git local-override mode).
   --hostname <ADDRESS|all|lo>      Server bind address (default: all / 0.0.0.0).
   --port <PORT>                     Server port (default: 4096).
-  --headless                        Use the API-only server instead of the web UI.
+  --headless                        API-only server (OpenCode v1 only; no-op for v2).
   -h, --help                       Show this help and exit.
   -V, --version                    Show the version and exit.
 

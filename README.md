@@ -56,7 +56,7 @@ ai-sandbox --help         # full usage reference (options, aliases, examples)
 ai-sandbox --version
 ```
 
-Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `serve start|stop|attach` manages an OpenCode v1 server, `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
+Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `serve start|stop|attach` manages an OpenCode server (v1 or v2), `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
 
 Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
@@ -70,26 +70,31 @@ OpenCode v1 and v2 are separate npm packages: `1.x` runs `opencode-ai`, while `2
 
 OpenCode v2 launches with `--standalone`, giving each TUI a private server and avoiding its managed background service's fixed port on the shared host network. The existing OpenCode config and data mounts remain shared with the host. Concurrent v2 sessions are available for testing, but shared OpenCode state may still cause contention; this launcher does not isolate v2's data store per workspace.
 
-### OpenCode v1 server for mobile access
+### OpenCode server for mobile access (v1 and v2)
 
-`asb serve` keeps an OpenCode v1 server running in a detached sandbox container. By default it runs `opencode web`, which serves both the browser UI and the API used by mobile apps. `--headless` selects `opencode serve` if only the API is wanted. The normal `asb --tool opencode` interactive command is unchanged.
+`asb serve` keeps an OpenCode server running in a detached sandbox container, reachable from a phone or browser on the host's network. It supports both OpenCode v1 (`opencode-ai`) and v2 (`@opencode/cli`); the server shape differs between the two.
+
+- **v1** runs `opencode web` by default (browser UI + API); `--headless` selects `opencode serve` for an API-only server. Clients log in with username `opencode` (or `OPENCODE_SERVER_USERNAME`) and the password from `OPENCODE_SERVER_PASSWORD`.
+- **v2** runs a single `@opencode/cli serve`, which always serves both the web UI and the API; `--headless` is accepted but has no effect. The password comes from `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD`, and browser/app access uses one-time pairing links rather than a password login.
 
 ```sh
-# OPENCODE_SERVER_PASSWORD must already be exported in the environment.
-asb serve start --tool opencode ~/projects/my-app
-# On your phone, open http://<host-zerotier-ip>:4096 or use the host's LAN IP.
-# Username: opencode (unless OPENCODE_SERVER_USERNAME is set).
+# Export a server password first. v1 reads OPENCODE_SERVER_PASSWORD; v2 reads
+# OPENCODE_PASSWORD (or OPENCODE_SERVER_PASSWORD, which v2 also honors).
+asb serve start --tool opencode ~/projects/my-app         # v1 (the default)
+asb serve start --tool opencode@2.0.18 ~/projects/my-app  # v2
+# v1: open http://<host-zerotier-ip>:4096 on your phone; username opencode + password.
+# v2: pair a browser or app once via `opencode pair` (see below).
 asb serve attach --tool opencode ~/projects/my-app
 asb serve stop --tool opencode ~/projects/my-app
 ```
 
-The server runs inside the same workspace and mount policy as the interactive sandbox. `attach` opens a TUI in that container; leaving the TUI keeps the server running. `stop` removes the server container. The command identifies a server by host user and canonical workspace path. `attach` also uses that path as its working directory. Specify the same workspace for all three actions, or run them from that workspace when omitting the path. `--tool opencode` can be omitted for `serve`; v2 and other tools are not supported by this command yet.
+The server runs inside the same workspace and mount policy as the interactive sandbox. `attach` opens a TUI in that container; for v2 it connects with `opencode --server <url>`. Leaving the TUI keeps the server running. `stop` removes the server container. The command identifies a server by host user and canonical workspace path; `attach` also uses that path as its working directory. Specify the same workspace for all three actions, or run them from that workspace when omitting the path. `--tool opencode` can be omitted for `serve`.
 
-Both network options are optional. `--port` defaults to `4096`, a stable port for phone bookmarks; OpenCode's bare `web` command normally chooses a random port. `--hostname` defaults to `all`, meaning `0.0.0.0` (all host IPv4 interfaces). Because the container uses host networking, this includes host and sandbox loopback, ZeroTier, and Wi-Fi/LAN addresses. No Docker port mapping is needed. `--hostname lo` binds only `127.0.0.1`; `--hostname <specific-ip>` limits the listener to that address, so other addresses, including localhost, cannot reach it. `all` and `lo` are launcher shorthands; OpenCode itself accepts addresses. A single server does not bind to two selected IPs separately. Use a different port for each concurrent workspace server.
+Both network options are optional. `--port` defaults to `4096`, a stable port for phone bookmarks; OpenCode's bare `web`/`serve` command normally chooses a random port. `--hostname` defaults to `all`, meaning `0.0.0.0` (all host IPv4 interfaces). Because the container uses host networking, this includes host and sandbox loopback, ZeroTier, and Wi-Fi/LAN addresses. No Docker port mapping is needed. `--hostname lo` binds only `127.0.0.1`; `--hostname <specific-ip>` limits the listener to that address, so other addresses, including localhost, cannot reach it. `all` and `lo` are launcher shorthands; OpenCode itself accepts addresses. A single server does not bind to two selected IPs separately. Use a different port for each concurrent workspace server.
 
-`start` waits for an authenticated health response before reporting success. If the container exits or never becomes ready, it stays available for `docker logs <container-name>` inspection; run `asb serve stop` before trying again.
+`start` waits for an authenticated health response (`GET /global/health` for v1, `GET /api/info` for v2) before reporting success. If the container exits or never becomes ready, it stays available for `docker logs <container-name>` inspection; run `asb serve stop` before trying again.
 
-`OPENCODE_SERVER_PASSWORD` is OpenCode's own server authentication variable and is required at startup. The launcher reads it from the environment; it never reads a password from stdin. It forwards the variable to Docker by name, keeping its value out of command arguments. Docker administrators can still inspect a container's environment. Set `OPENCODE_SERVER_USERNAME` before `start` to change the default username. The all-interface default also listens on any other host IPv4 interface; restrict the port to trusted networks with a host firewall if needed. ZeroTier encrypts traffic between its peers.
+The server password is read from the environment, never from stdin, and is forwarded to Docker by name so its value never appears in command arguments (Docker administrators can still inspect a container's environment). OpenCode v1 requires `OPENCODE_SERVER_PASSWORD` and takes an optional `OPENCODE_SERVER_USERNAME`; OpenCode v2 accepts either `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD` with the fixed username `opencode`. To connect a phone or browser to a v2 server, pair it: run `opencode pair` (pointed at the server with `--server <url>`) and open the printed one-time link. The all-interface default also listens on any other host IPv4 interface; restrict the port to trusted networks with a host firewall if needed. ZeroTier encrypts traffic between its peers.
 
 ## Browser automation (on the host)
 
