@@ -331,11 +331,11 @@ assert_eq "profile OpenCode: two API key pairs" "4" "${#TOOL_ENV_ARGS[@]}"
   bad "profile OpenCode: both API key names forwarded ($(printf '<%s>' "${TOOL_ENV_ARGS[@]}"))"
 
 reset_profile_context
-OPENCODE_VERSION=2.0.12
+OPENCODE_VERSION=2.0.18
 ANTHROPIC_API_KEY=anthropic-secret
 OPENAI_API_KEY=openai-secret
 configure_tool opencode
-assert_eq "profile OpenCode: v2 package" "@opencode/cli@2.0.12" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: v2 package" "@opencode/cli@2.0.18" "$TOOL_PACKAGE"
 assert_eq "profile OpenCode: v2 autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
 assert_eq "profile OpenCode: v2 standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 assert_eq "profile OpenCode: v2 two mounts" "4" "${#TOOL_VOLUME_ARGS[@]}"
@@ -347,9 +347,9 @@ configure_tool opencode
 assert_eq "profile OpenCode: latest resolves to the v2 package" "@opencode/cli@latest" "$TOOL_PACKAGE"
 
 reset_profile_context
-OPENCODE_VERSION=v2.0.11
+OPENCODE_VERSION=v2.0.18
 configure_tool opencode
-assert_eq "profile OpenCode: leading v in version is tolerated" "@opencode/cli@v2.0.11" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: leading v in version is tolerated" "@opencode/cli@v2.0.18" "$TOOL_PACKAGE"
 
 reset_profile_context
 OPENCODE_CONFIG_PASSTHROUGH=false
@@ -407,22 +407,22 @@ assert_eq "profile OpenCode: bundled v1 version chips v1 flags" "--auto" "${TOOL
 assert_eq "profile OpenCode: bundled v1 version standalone omitted" "1" "${#TOOL_DEFAULT_ARGS[@]}"
 
 reset_profile_context
-CLI_TOOL_VERSION=v2.0.11
+CLI_TOOL_VERSION=v2.0.18
 ANTHROPIC_API_KEY=anthropic-secret
 OPENAI_API_KEY=openai-secret
 configure_tool opencode
-assert_eq "profile OpenCode: bundled v2 version wins package" "@opencode/cli@v2.0.11" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: bundled v2 version wins package" "@opencode/cli@v2.0.18" "$TOOL_PACKAGE"
 assert_eq "profile OpenCode: bundled v2 version chip" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 
 reset_profile_context
 STUB_BIN="$PROFILE_TMP/bin-v2"
 mkdir -p "$STUB_BIN"
-printf '#!/bin/sh\nprintf "opencode v2.0.12\\n"\n' > "$STUB_BIN/opencode"
+printf '#!/bin/sh\nprintf "opencode v2.0.18\\n"\n' > "$STUB_BIN/opencode"
 chmod +x "$STUB_BIN/opencode"
 OLD_PATH="$PATH"
 PATH="$STUB_BIN:$PATH"
 configure_tool opencode
-assert_eq "profile OpenCode: host v2 version fallback" "@opencode/cli@2.0.12" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: host v2 version fallback" "@opencode/cli@2.0.18" "$TOOL_PACKAGE"
 assert_eq "profile OpenCode: host v2 uses standalone" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 PATH="$OLD_PATH"
 
