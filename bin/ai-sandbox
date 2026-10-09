@@ -747,9 +747,6 @@ SELECTED_TOOL="$CLI_RESOLVED_TOOL"
 configure_tool "$SELECTED_TOOL"
 if [[ -n "$SERVE_ACTION" ]]; then
   [[ "$SELECTED_TOOL" == opencode ]] || { launcher_error "serve currently supports only OpenCode"; exit 2; }
-  if [[ "$SERVE_ACTION" == start ]]; then
-    [[ "$TOOL_PACKAGE" == opencode-ai* ]] || { launcher_error "serve currently supports only OpenCode v1"; exit 2; }
-  fi
 fi
 
 # Proxy environment passthrough applies to npx and every tool profile.
@@ -821,17 +818,30 @@ if [[ "$SERVE_ACTION" == attach ]]; then
   SERVE_HOSTNAME="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.hostname" }}' "$SERVE_NAME")"
   [[ -n "$SERVE_HOSTNAME" && "$SERVE_HOSTNAME" != '<no value>' ]] || { launcher_error "server hostname metadata is missing"; exit 2; }
   SERVE_PACKAGE="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.package" }}' "$SERVE_NAME")"
-  [[ "$SERVE_PACKAGE" == opencode-ai* ]] || { launcher_error "server package metadata is missing"; exit 2; }
   SERVE_ATTACH_HOST="$SERVE_HOSTNAME"
   [[ "$SERVE_ATTACH_HOST" == "0.0.0.0" ]] && SERVE_ATTACH_HOST="127.0.0.1"
+  case "$SERVE_PACKAGE" in
+    opencode-ai*)   SERVE_ATTACH_ARGS=(attach "http://$SERVE_ATTACH_HOST:$SERVE_PORT") ;;
+    @opencode/cli*) SERVE_ATTACH_ARGS=(--server "http://$SERVE_ATTACH_HOST:$SERVE_PORT") ;;
+    *) launcher_error "server package metadata is missing"; exit 2 ;;
+  esac
   progress_stop
   docker exec -u "${SANDBOX_UID}:${SANDBOX_GID}" -w "$WORKSPACE_DIR" -it "$SERVE_NAME" \
-    npx --yes "$SERVE_PACKAGE" attach "http://$SERVE_ATTACH_HOST:$SERVE_PORT"
+    npx --yes "$SERVE_PACKAGE" "${SERVE_ATTACH_ARGS[@]}"
   exit $?
 fi
 
 if [[ "$SERVE_ACTION" == start ]]; then
-  [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]] || { launcher_error "OPENCODE_SERVER_PASSWORD is required for serve start"; exit 2; }
+  case "$TOOL_PACKAGE" in
+    opencode-ai*)
+      [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]] ||
+        { launcher_error "OPENCODE_SERVER_PASSWORD is required for serve start (OpenCode v1)"; exit 2; }
+      ;;
+    @opencode/cli*)
+      [[ -n "${OPENCODE_SERVER_PASSWORD:-}" || -n "${OPENCODE_PASSWORD:-}" ]] ||
+        { launcher_error "OPENCODE_PASSWORD or OPENCODE_SERVER_PASSWORD is required for serve start (OpenCode v2)"; exit 2; }
+      ;;
+  esac
   if docker container inspect "$SERVE_NAME" >/dev/null 2>&1; then
     launcher_error "server already exists for $WORKSPACE_DIR; use 'asb serve stop' first"
     exit 2
@@ -985,10 +995,25 @@ if [[ "$SANDBOX_PROGRESS" == "true" ]]; then
 fi
 
 if [[ "$SERVE_ACTION" == start ]]; then
-  SERVER_ENV_ARGS=(-e OPENCODE_SERVER_PASSWORD)
-  [[ -n "${OPENCODE_SERVER_USERNAME:-}" ]] && SERVER_ENV_ARGS+=(-e OPENCODE_SERVER_USERNAME)
-  SERVER_COMMAND=web
-  [[ "$SERVE_HEADLESS" == true ]] && SERVER_COMMAND=serve
+  case "$TOOL_PACKAGE" in
+    opencode-ai*)
+      SERVER_ENV_ARGS=(-e OPENCODE_SERVER_PASSWORD)
+      [[ -n "${OPENCODE_SERVER_USERNAME:-}" ]] && SERVER_ENV_ARGS+=(-e OPENCODE_SERVER_USERNAME)
+      SERVER_COMMAND=web
+      [[ "$SERVE_HEADLESS" == true ]] && SERVER_COMMAND=serve
+      SERVE_HEALTH_PATH=/global/health
+      ;;
+    @opencode/cli*)
+      # v2: --headless has no API-only equivalent; serve always runs web+API.
+      if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+        SERVER_ENV_ARGS=(-e OPENCODE_SERVER_PASSWORD)
+      else
+        SERVER_ENV_ARGS=(-e OPENCODE_PASSWORD)
+      fi
+      SERVER_COMMAND=serve
+      SERVE_HEALTH_PATH=/api/info
+      ;;
+  esac
   docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
     -d -T --name "$SERVE_NAME" \
     --label "ai-sandbox.serve.port=$SERVE_PORT" \
@@ -1020,14 +1045,14 @@ if [[ "$SERVE_ACTION" == start ]]; then
       if (host === "0.0.0.0") host = "127.0.0.1"
       if (host === "::") host = "::1"
       if (host.includes(":")) host = `[${host}]`
-      const url = `http://${host}:${process.argv[2]}/global/health`
+      const url = `http://${host}:${process.argv[2]}${process.argv[3]}`
       const username = process.env.OPENCODE_SERVER_USERNAME || "opencode"
-      const password = process.env.OPENCODE_SERVER_PASSWORD || ""
+      const password = process.env.OPENCODE_SERVER_PASSWORD || process.env.OPENCODE_PASSWORD || ""
       const auth = "Basic " + Buffer.from(`${username}:${password}`).toString("base64")
       fetch(url, {headers: {Authorization: auth}, signal: AbortSignal.timeout(1000)})
         .then(response => process.exit(response.ok ? 0 : 1))
         .catch(() => process.exit(1))
-    ' "$SERVE_HOSTNAME" "$SERVE_PORT" >/dev/null 2>&1; then
+    ' "$SERVE_HOSTNAME" "$SERVE_PORT" "$SERVE_HEALTH_PATH" >/dev/null 2>&1; then
       if [[ "$(docker inspect -f '{{.State.Running}}' "$SERVE_NAME" 2>/dev/null)" == true ]]; then
         SERVER_READY=true
         break
@@ -1046,7 +1071,14 @@ if [[ "$SERVE_ACTION" == start ]]; then
   else
     echo "ai-sandbox: OpenCode server started at http://$SERVE_HOSTNAME:$SERVE_PORT"
   fi
-  echo "ai-sandbox: username ${OPENCODE_SERVER_USERNAME:-opencode}; password from OPENCODE_SERVER_PASSWORD"
+  case "$TOOL_PACKAGE" in
+    opencode-ai*)
+      echo "ai-sandbox: username ${OPENCODE_SERVER_USERNAME:-opencode}; password from OPENCODE_SERVER_PASSWORD"
+      ;;
+    @opencode/cli*)
+      echo "ai-sandbox: connect a client with 'asb serve attach'; pair a browser or app with 'opencode pair'"
+      ;;
+  esac
   exit 0
 fi
 

@@ -23,7 +23,7 @@ if [[ "$1" == inspect ]]; then
   case " $* " in
     *ai-sandbox.serve.port*) echo 4096 ;;
     *ai-sandbox.serve.hostname*) echo "${DOCKER_STUB_HOSTNAME:-10.44.55.66}" ;;
-    *ai-sandbox.serve.package*) echo opencode-ai@1.18.31 ;;
+    *ai-sandbox.serve.package*) echo "${DOCKER_STUB_PACKAGE:-opencode-ai@1.18.31}" ;;
   esac
 fi
 if [[ "$1" == exec && "${DOCKER_HEALTH_FAIL:-0}" == 1 ]]; then
@@ -42,11 +42,13 @@ run_launcher() {
     SANDBOX_PROGRESS=false SANDBOX_CLEANUP=false \
     SANDBOX_UID=1234 SANDBOX_GID=1234 SANDBOX_USERNAME=tester SANDBOX_HOME=/home/tester \
     OPENCODE_VERSION=1.18.31 OPENCODE_SERVER_PASSWORD="${TEST_SERVER_PASSWORD-test password}" \
+    OPENCODE_PASSWORD="${TEST_OPENCODE_PASSWORD-}" \
     DOCKER_EXISTS="${TEST_DOCKER_EXISTS:-0}" \
     DOCKER_START_FAIL="${TEST_DOCKER_START_FAIL:-0}" \
     DOCKER_HEALTH_FAIL="${TEST_DOCKER_HEALTH_FAIL:-0}" \
     DOCKER_RUNNING="${TEST_DOCKER_RUNNING:-true}" \
     DOCKER_STUB_HOSTNAME="${TEST_DOCKER_STUB_HOSTNAME:-10.44.55.66}" \
+    DOCKER_STUB_PACKAGE="${DOCKER_STUB_PACKAGE-}" \
     AI_SANDBOX_DIR="$ROOT/share/ai-sandbox" \
     bash "$LAUNCHER" "$@" >"$TMP/out" 2>"$TMP/err"
 }
@@ -72,6 +74,11 @@ if run_launcher serve start --tool opencode --hostname 10.44.55.66 --port 4096 "
     echo 'FAIL: TUI-only flag reached web server'; fail=1
   else
     echo 'PASS: web server omits TUI-only flag'
+  fi
+  if tr '\0' ' ' < "$TMP/calls" | grep -q '/global/health'; then
+    echo 'PASS: v1 server health-checks /global/health'
+  else
+    echo 'FAIL: v1 health path'; fail=1
   fi
   if grep -q 'test password' "$TMP/calls"; then
     echo 'FAIL: password appeared in Docker arguments'; fail=1
@@ -141,11 +148,90 @@ else
   echo 'FAIL: headless start rejected'; fail=1
 fi
 
-if run_launcher serve start --tool opencode@2.0.0 --hostname 10.44.55.66 "$TMP/project"; then
-  echo 'FAIL: v2 server unexpectedly accepted'; fail=1
+# --- OpenCode v2 serve ---
+
+if run_launcher serve start --tool opencode@2.0.0 --hostname 10.44.55.66 --port 4096 "$TMP/project"; then
+  if tr '\0' ' ' < "$TMP/calls" | grep -q 'run -d .*@opencode/cli@2.0.0 serve --hostname 10.44.55.66 --port 4096'; then
+    echo 'PASS: v2 detached server starts (serve)'
+  else
+    echo 'FAIL: v2 detached server command'; fail=1
+  fi
+  if tr '\0' ' ' < "$TMP/calls" | grep -q -- '-e OPENCODE_SERVER_PASSWORD'; then
+    echo 'PASS: v2 forwards password by name'
+  else
+    echo 'FAIL: v2 password forwarding'; fail=1
+  fi
+  if tr '\0' ' ' < "$TMP/calls" | grep -q '/api/info'; then
+    echo 'PASS: v2 server health-checks /api/info'
+  else
+    echo 'FAIL: v2 health path'; fail=1
+  fi
+  if tr '\0' ' ' < "$TMP/calls" | grep -q -- '--auto\|--standalone'; then
+    echo 'FAIL: v2 serve leaked a TUI-only flag'; fail=1
+  else
+    echo 'PASS: v2 serve omits TUI-only flags'
+  fi
+  if grep -q 'test password' "$TMP/calls"; then
+    echo 'FAIL: v2 password appeared in Docker arguments'; fail=1
+  fi
 else
-  echo 'PASS: v2 server rejected'
+  echo "FAIL: v2 start rejected: $(cat "$TMP/err")"; fail=1
 fi
+
+# --headless is a no-op for v2
+if run_launcher serve start --tool opencode@2.0.0 --headless --hostname 10.44.55.66 "$TMP/project"; then
+  if tr '\0' ' ' < "$TMP/calls" | grep -q '@opencode/cli@2.0.0 serve ' && \
+     ! tr '\0' ' ' < "$TMP/calls" | grep -q 'web'; then
+    echo 'PASS: v2 --headless is a no-op (still runs serve)'
+  else
+    echo 'FAIL: v2 --headless handling'; fail=1
+  fi
+else
+  echo 'FAIL: v2 headless start rejected'; fail=1
+fi
+
+# OPENCODE_PASSWORD alone is accepted and forwarded by name
+TEST_SERVER_PASSWORD=''
+TEST_OPENCODE_PASSWORD='v2secret'
+if run_launcher serve start --tool opencode@2.0.0 --hostname 10.44.55.66 "$TMP/project"; then
+  if tr '\0' ' ' < "$TMP/calls" | grep -q -- '-e OPENCODE_PASSWORD' && \
+     ! tr '\0' ' ' < "$TMP/calls" | grep -q -- '-e OPENCODE_SERVER_PASSWORD'; then
+    echo 'PASS: v2 accepts OPENCODE_PASSWORD by name'
+  else
+    echo 'FAIL: v2 OPENCODE_PASSWORD forwarding'; fail=1
+  fi
+else
+  echo "FAIL: v2 OPENCODE_PASSWORD start rejected: $(cat "$TMP/err")"; fail=1
+fi
+unset TEST_OPENCODE_PASSWORD TEST_SERVER_PASSWORD
+
+# Neither password var set → rejected before Docker
+TEST_SERVER_PASSWORD=''
+TEST_OPENCODE_PASSWORD=''
+if run_launcher serve start --tool opencode@2.0.0 --hostname 10.44.55.66 "$TMP/project"; then
+  echo 'FAIL: v2 with no password env accepted'; fail=1
+else
+  if grep -q 'OPENCODE_PASSWORD or OPENCODE_SERVER_PASSWORD is required' "$TMP/err" && [[ ! -s "$TMP/calls" ]]; then
+    echo 'PASS: v2 rejects missing password before Docker'
+  else
+    echo 'FAIL: v2 missing-password handling'; fail=1
+  fi
+fi
+unset TEST_OPENCODE_PASSWORD TEST_SERVER_PASSWORD
+
+# v2 attach connects via --server
+TEST_DOCKER_EXISTS=1
+DOCKER_STUB_PACKAGE='@opencode/cli@2.0.0'
+if run_launcher serve attach --tool opencode@2.0.0 "$TMP/project"; then
+  if tr '\0' ' ' < "$TMP/calls" | grep -q 'exec -u 1234:1234 .*@opencode/cli@2.0.0 --server http://10.44.55.66:4096'; then
+    echo 'PASS: v2 TUI attaches via --server'
+  else
+    echo 'FAIL: v2 attach command'; fail=1
+  fi
+else
+  echo 'FAIL: v2 attach rejected'; fail=1
+fi
+unset TEST_DOCKER_EXISTS DOCKER_STUB_PACKAGE
 
 TEST_DOCKER_EXISTS=1
 TEST_SERVER_PASSWORD=''
