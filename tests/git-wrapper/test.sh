@@ -27,7 +27,7 @@ assert_blocked() {
     local desc="$1"; shift
     rm -f "$STUB_DIR/called"
     local err code
-    err="$(REAL_GIT="$STUB_DIR/git" "$WRAPPER" "$@" 2>&1 >/dev/null)" && code=0 || code=$?
+    err="$(REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET=strict "$WRAPPER" "$@" 2>&1 >/dev/null)" && code=0 || code=$?
     if [[ $code -ne 1 ]]; then
         echo "FAIL: $desc (exit $code, expected 1)"
         fail=$((fail+1)); return
@@ -48,7 +48,46 @@ assert_blocked() {
 assert_allowed() {
     local desc="$1"; shift
     rm -f "$STUB_DIR/called"
-    REAL_GIT="$STUB_DIR/git" "$WRAPPER" "$@" >/dev/null 2>&1
+    REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET=strict "$WRAPPER" "$@" >/dev/null 2>&1
+    local code=$?
+    if [[ $code -ne 0 ]]; then
+        echo "FAIL: $desc (exit $code, expected 0)"
+        fail=$((fail+1)); return
+    fi
+    if [[ ! -f "$STUB_DIR/called" ]]; then
+        echo "FAIL: $desc (real git was not called)"
+        fail=$((fail+1)); return
+    fi
+    echo "PASS: $desc"
+    pass=$((pass+1))
+}
+
+# Preset-aware variants: run the wrapper under an explicit SANDBOX_GIT_PRESET.
+assert_blocked_preset() {
+    local preset="$1" desc="$2"; shift 2
+    rm -f "$STUB_DIR/called"
+    local err code
+    err="$(REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET="$preset" "$WRAPPER" "$@" 2>&1 >/dev/null)" && code=0 || code=$?
+    if [[ $code -ne 1 ]]; then
+        echo "FAIL: $desc (exit $code, expected 1)"
+        fail=$((fail+1)); return
+    fi
+    if [[ "$err" != *"[SECURITY]"* ]]; then
+        echo "FAIL: $desc (no [SECURITY] in stderr: $err)"
+        fail=$((fail+1)); return
+    fi
+    if [[ -f "$STUB_DIR/called" ]]; then
+        echo "FAIL: $desc (real git was called despite block)"
+        fail=$((fail+1)); return
+    fi
+    echo "PASS: $desc"
+    pass=$((pass+1))
+}
+
+assert_allowed_preset() {
+    local preset="$1" desc="$2"; shift 2
+    rm -f "$STUB_DIR/called"
+    REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET="$preset" "$WRAPPER" "$@" >/dev/null 2>&1
     local code=$?
     if [[ $code -ne 0 ]]; then
         echo "FAIL: $desc (exit $code, expected 0)"
@@ -252,7 +291,7 @@ assert_blocked_with_policy() {
     printf '%s' "$policy_content" > "$POLICY_TMP"
     rm -f "$STUB_DIR/called"
     local err code
-    err="$(REAL_GIT="$STUB_DIR/git" GIT_POLICY_FILE="$POLICY_TMP" "$WRAPPER" "$@" 2>&1 >/dev/null)" && code=0 || code=$?
+    err="$(REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET=strict GIT_POLICY_FILE="$POLICY_TMP" "$WRAPPER" "$@" 2>&1 >/dev/null)" && code=0 || code=$?
     if [[ $code -ne 1 || "$err" != *"[SECURITY]"* ]]; then
         echo "FAIL: $desc (expected block, got code=$code err='$err')"
         fail=$((fail+1)); return
@@ -266,7 +305,7 @@ assert_allowed_with_policy() {
     local policy_content="$1"; shift
     printf '%s' "$policy_content" > "$POLICY_TMP"
     rm -f "$STUB_DIR/called"
-    REAL_GIT="$STUB_DIR/git" GIT_POLICY_FILE="$POLICY_TMP" "$WRAPPER" "$@" >/dev/null 2>&1
+    REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET=strict GIT_POLICY_FILE="$POLICY_TMP" "$WRAPPER" "$@" >/dev/null 2>&1
     local code=$?
     if [[ $code -ne 0 || ! -f "$STUB_DIR/called" ]]; then
         echo "FAIL: $desc (expected allow, got code=$code)"
@@ -434,6 +473,84 @@ else
     fail=$((fail+1))
 fi
 rm -f "$POLICY_TMP"
+
+# --- Preset tests ---
+
+# Baseline hardening: force-move (branch -f/--force) and the long form of
+# switch -C (--force-create) are ref resets, always blocked in every preset.
+assert_blocked "git branch -f main (force-move)" branch -f main
+assert_blocked "git branch --force main (force-move)" branch --force main
+assert_blocked "git switch --force-create main" switch --force-create main
+
+# daily (default): bounded working-tree discards + amend allowed; history/ref
+# rewriting, clean, rm still blocked.
+assert_allowed_preset daily "daily: checkout -- file.txt" checkout -- file.txt
+assert_allowed_preset daily "daily: checkout -f main" checkout -f main
+assert_allowed_preset daily "daily: checkout --force main" checkout --force main
+assert_allowed_preset daily "daily: restore --worktree file.txt" restore --worktree file.txt
+assert_allowed_preset daily "daily: restore -W file.txt" restore -W file.txt
+assert_allowed_preset daily "daily: switch --discard-changes main" switch --discard-changes main
+assert_allowed_preset daily "daily: switch --discard main" switch --discard main
+assert_allowed_preset daily "daily: commit --amend" commit --amend
+assert_allowed_preset daily "daily: commit --amend --no-edit" commit --amend --no-edit
+assert_allowed_preset daily "daily: commit --reset-author --amend" commit --reset-author --amend
+
+assert_blocked_preset daily "daily: checkout -B main" checkout -B main
+assert_blocked_preset daily "daily: checkout -Bf main" checkout -Bf main
+assert_blocked_preset daily "daily: switch -C main" switch -C main
+assert_blocked_preset daily "daily: switch --force-create main" switch --force-create main
+assert_blocked_preset daily "daily: clean -fd" clean -fd
+assert_blocked_preset daily "daily: rm file.txt" rm file.txt
+assert_blocked_preset daily "daily: branch -D feature" branch -D feature
+assert_blocked_preset daily "daily: branch -f main (force-move)" branch -f main
+assert_blocked_preset daily "daily: tag -f v1" tag -f v1
+assert_blocked_preset daily "daily: stash drop" stash drop
+assert_blocked_preset daily "daily: reset --hard" reset --hard
+assert_blocked_preset daily "daily: rebase main" rebase main
+assert_blocked_preset daily "daily: push" push
+assert_blocked_preset daily "daily: config" config
+assert_blocked_preset daily "daily: commit-tree" commit-tree
+
+# relaxed: daily + branch force-delete, tag force, stash drop/clear, clean, rm.
+assert_allowed_preset relaxed "relaxed: branch -D feature" branch -D feature
+assert_allowed_preset relaxed "relaxed: branch --delete --force feature" branch --delete --force feature
+assert_allowed_preset relaxed "relaxed: branch -df feature" branch -df feature
+assert_allowed_preset relaxed "relaxed: tag -f v1" tag -f v1
+assert_allowed_preset relaxed "relaxed: tag --force v1" tag --force v1
+assert_allowed_preset relaxed "relaxed: stash drop" stash drop
+assert_allowed_preset relaxed "relaxed: stash clear" stash clear
+assert_allowed_preset relaxed "relaxed: clean -fd" clean -fd
+assert_allowed_preset relaxed "relaxed: rm file.txt" rm file.txt
+
+assert_blocked_preset relaxed "relaxed: branch -f main (force-move)" branch -f main
+assert_blocked_preset relaxed "relaxed: reset --hard" reset --hard
+assert_blocked_preset relaxed "relaxed: rebase main" rebase main
+assert_blocked_preset relaxed "relaxed: push" push
+assert_blocked_preset relaxed "relaxed: config" config
+assert_blocked_preset relaxed "relaxed: update-ref" update-ref refs/heads/x HEAD
+
+# strict: baseline blocks bounded discards too (no preset relaxations).
+assert_blocked_preset strict "strict: checkout -- file.txt" checkout -- file.txt
+assert_blocked_preset strict "strict: commit --amend" commit --amend
+assert_blocked_preset strict "strict: restore --worktree file.txt" restore --worktree file.txt
+
+# Unknown preset -> strict (fail-safe).
+assert_blocked_preset banana "unknown preset blocks checkout --" checkout -- file.txt
+assert_blocked_preset banana "unknown preset blocks commit --amend" commit --amend
+
+# User policy still patches the preset baseline: user block wins over daily allow.
+PRESET_PRECEDENCE="$(mktemp)"
+printf '[block]\n^checkout --\n' > "$PRESET_PRECEDENCE"
+rm -f "$STUB_DIR/called"
+err="$(REAL_GIT="$STUB_DIR/git" SANDBOX_GIT_PRESET=daily GIT_POLICY_FILE="$PRESET_PRECEDENCE" "$WRAPPER" checkout -- file.txt 2>&1 >/dev/null)" && code=0 || code=$?
+if [[ $code -eq 1 && ! -f "$STUB_DIR/called" ]]; then
+    echo "PASS: daily preset + user block ^checkout -- still blocks"
+    pass=$((pass+1))
+else
+    echo "FAIL: user block over preset allow (code=$code)"
+    fail=$((fail+1))
+fi
+rm -f "$PRESET_PRECEDENCE"
 
 echo ""
 echo "Results: $pass passed, $fail failed"

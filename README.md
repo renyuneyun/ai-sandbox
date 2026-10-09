@@ -56,7 +56,7 @@ ai-sandbox --help         # full usage reference (options, aliases, examples)
 ai-sandbox --version
 ```
 
-Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `serve start|stop|attach` manages an OpenCode server (v1 or v2), `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
+Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `--git-preset <strict|daily|relaxed>` selects the git policy preset (default `daily`), `serve start|stop|attach` manages an OpenCode server (v1 or v2), `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
 
 Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
@@ -134,7 +134,7 @@ See [docs/configuration.md](docs/configuration.md) for the full schema and per-k
 
 The package ships bash and zsh tab-completion for `ai-sandbox` and its aliases (`asb`, `asb-claude`, `asb-codex`, `asb-opencode`).
 
-How it works: when you press Tab, your shell runs a completion function that offers the launcher's options (`--tool`, `--help`, `--version`, `--allow-local-git`, `--`), the tool names after `--tool` (`claude`, `codex`, `opencode`), and directory names for the workspace argument. After a bare `--`, completion defers to the selected tool's own arguments (i.e. the shell's default).
+How it works: when you press Tab, your shell runs a completion function that offers the launcher's options (`--tool`, `--help`, `--version`, `--allow-local-git`, `--git-preset`, `--`), the tool names after `--tool` (`claude`, `codex`, `opencode`), the preset names after `--git-preset` (`strict`, `daily`, `relaxed`), and directory names for the workspace argument. After a bare `--`, completion defers to the selected tool's own arguments (i.e. the shell's default).
 
 Install places the files where the shells look automatically:
 
@@ -155,7 +155,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
 - [x] **Sandboxed execution** - confines Claude Code to the target workspace, protecting the rest of your system from unintended changes
     - [x] **Workspace isolation** - only the target project directory is mounted; the rest of the host filesystem is unreachable inside the container
     - [x] **Isolated environment and cache** - packages and global tools install into a persistent container volume, never touching the host
-    - [x] **Git operation policy** - a wrapper script blocks destructive git operations (push, reset, rebase, clean, commit --amend, branch -D, tag -f, worktree remove --force, worktree prune, etc.) and history-bypass plumbing (commit-tree, update-ref, replace, fast-import, prune, symbolic-ref) while allowing non-destructive and appending-only operations (commit, add, status, log, fetch, merge, branch -d, tag -d, worktree remove, etc.)
+    - [x] **Git operation policy** - a wrapper script blocks destructive git operations and history-bypass plumbing (`push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`, `checkout -B`, `switch -C`, `branch -f`, `worktree prune`, `worktree remove --force`, `gc --prune`) while allowing non-destructive and appending-only operations (`commit`, `add`, `status`, `log`, `fetch`, `merge`, `branch -d`, `tag -d`, `worktree remove`, etc.). Three presets gate the less-severe operations: `strict` blocks them all, `daily` (default) allows bounded working-tree discards and `commit --amend`, and `relaxed` also allows branch/tag force-delete, `stash drop`, `clean`, and `rm` — selected per repo (`git.policy.preset`), environment (`SANDBOX_GIT_PRESET`), or CLI (`--git-preset`).
     - [x] **Git config inheritance** - the host user's `~/.gitconfig` and `~/.config/git/` are bind-mounted read-only so Claude commits with the host user's identity
     - [x] **Sandbox information** - The runtime can detect that it is in the sandbox
         - [x] Option 1: via `IS_SANDBOX=1`
@@ -186,7 +186,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
 - [x] **Customization** - set preferences through config files (with docs and examples)
     - [x] **Config foundation** - YAML config loading (`yq`), env > workspace > user > default precedence, identity knobs (`sandbox_uid`/`gid`/`username`/`home`)
     - [ ] All isolation designs should be customizable
-    - [x] **Git policy** - regex-based allow/block lists (`git.policy.allow` / `git.policy.block`) that patch the default wrapper policy
+    - [x] **Git policy** - preset selector (`git.policy.preset`: `strict`/`daily`/`relaxed`) plus regex-based allow/block lists (`git.policy.allow` / `git.policy.block`) that patch the wrapper policy
     - [x] **Git config** - per-sandbox identity override (`git.identity.name`/`email`) and host config passthrough toggle (`git.host_config_passthrough`)
     - [x] **Claude version** - pin Claude Code version via `claude.version`
     - [x] **Claude config passthrough** - toggle `~/.claude` mount via `claude.config_passthrough`

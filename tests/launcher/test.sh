@@ -124,10 +124,21 @@ parse_launcher_args --tool codex --allow-local-git
 assert_eq "parse: flag order independence (tool)" "codex" "$CLI_TOOL"
 assert_eq "parse: flag order independence (override)" "true" "${CLI_ALLOW_LOCAL_GIT:-}"
 
+parse_launcher_args --git-preset daily
+assert_eq "parse: git-preset sets CLI_GIT_PRESET" "daily" "${CLI_GIT_PRESET:-}"
+
+parse_launcher_args --tool codex --git-preset strict
+assert_eq "parse: git-preset with tool" "codex" "$CLI_TOOL"
+assert_eq "parse: git-preset strict value" "strict" "${CLI_GIT_PRESET:-}"
+
+parse_launcher_args
+assert_eq "parse: no flag leaves CLI_GIT_PRESET empty" "" "${CLI_GIT_PRESET:-}"
+
 # Reset state
 unset CLI_ALLOW_LOCAL_GIT
 
 if parse_launcher_args --tool >/dev/null 2>&1; then bad "parse: missing tool value"; else ok "parse: missing tool value"; fi
+if parse_launcher_args --git-preset >/dev/null 2>&1; then bad "parse: missing git-preset value"; else ok "parse: missing git-preset value"; fi
 if parse_launcher_args --bogus >/dev/null 2>&1; then bad "parse: unsupported option"; else ok "parse: unsupported option"; fi
 if parse_launcher_args one two >/dev/null 2>&1; then bad "parse: multiple workspaces"; else ok "parse: multiple workspaces"; fi
 
@@ -184,7 +195,7 @@ else
 fi
 
 HELP_OUT="$(print_help)"
-[[ "$HELP_OUT" == *"USAGE:"* && "$HELP_OUT" == *"--tool"* && "$HELP_OUT" == *"--allow-local-git"* ]] &&
+[[ "$HELP_OUT" == *"USAGE:"* && "$HELP_OUT" == *"--tool"* && "$HELP_OUT" == *"--allow-local-git"* && "$HELP_OUT" == *"--git-preset"* ]] &&
   ok "help: print_help includes usage and options" ||
   bad "help: print_help includes usage and options"
 [[ "$HELP_OUT" == *"--help"* && "$HELP_OUT" == *"--version"* ]] &&
@@ -236,6 +247,37 @@ if command -v yq >/dev/null 2>&1; then
     assert_eq "resolve_allow_local: env beats workspace" "true" "$(resolve_allow_local "")"
     assert_eq "resolve_allow_local: CLI beats env" "false" "$(resolve_allow_local false)"
     unset SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS
+fi
+
+# --- resolve_git_preset tests ---
+# Mirrors resolve_allow_local: CLI value wins, else resolve() from
+# env/config/default. Default is "daily".
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=false
+unset SANDBOX_GIT_PRESET
+assert_eq "resolve_git_preset: default daily" "daily" "$(resolve_git_preset "")"
+assert_eq "resolve_git_preset: CLI strict wins" "strict" "$(resolve_git_preset strict)"
+SANDBOX_GIT_PRESET=relaxed
+assert_eq "resolve_git_preset: env relaxed" "relaxed" "$(resolve_git_preset "")"
+assert_eq "resolve_git_preset: CLI beats env" "daily" "$(resolve_git_preset daily)"
+unset SANDBOX_GIT_PRESET
+
+if command -v yq >/dev/null 2>&1; then
+    PRESET_TMP="$(mktemp -d)"
+    PROFILE_TMP_DIRS+=("$PRESET_TMP")
+    printf 'git:\n  policy:\n    preset: relaxed\n' > "$PRESET_TMP/workspace.yaml"
+    printf 'git:\n  policy:\n    preset: strict\n' > "$PRESET_TMP/user.yaml"
+    WORKSPACE_CONFIG="$PRESET_TMP/workspace.yaml"
+    USER_CONFIG="$PRESET_TMP/user.yaml"
+    WORKSPACE_CONFIG_VALID=true
+    USER_CONFIG_VALID=true
+    unset SANDBOX_GIT_PRESET
+    assert_eq "resolve_git_preset: workspace beats user" "relaxed" "$(resolve_git_preset "")"
+    WORKSPACE_CONFIG_VALID=false
+    assert_eq "resolve_git_preset: user when workspace invalid" "strict" "$(resolve_git_preset "")"
+    SANDBOX_GIT_PRESET=daily
+    assert_eq "resolve_git_preset: env beats workspace" "daily" "$(resolve_git_preset "")"
+    unset SANDBOX_GIT_PRESET
 fi
 
 # Restore state for subsequent tests
@@ -571,6 +613,32 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
   ok "integration: env var override reaches Docker" ||
   bad "integration: env var override reaches Docker ($CAPTURED_JOINED)"
 unset SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS
+
+# --- SANDBOX_GIT_PRESET integration tests ---
+CAPTURE_DIR_PRESET_DEFAULT="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_PRESET_DEFAULT")
+run_captured_launcher "$CAPTURE_DIR_PRESET_DEFAULT" "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-e><SANDBOX_GIT_PRESET=daily>"* ]] &&
+  ok "integration: default git preset (daily) reaches Docker env" ||
+  bad "integration: default git preset reaches Docker env ($CAPTURED_JOINED)"
+
+CAPTURE_DIR_PRESET_CLI="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_PRESET_CLI")
+run_captured_launcher "$CAPTURE_DIR_PRESET_CLI" --git-preset strict "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-e><SANDBOX_GIT_PRESET=strict>"* ]] &&
+  ok "integration: --git-preset strict reaches Docker env" ||
+  bad "integration: --git-preset strict reaches Docker env ($CAPTURED_JOINED)"
+
+CAPTURE_DIR_PRESET_ENV="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_PRESET_ENV")
+SANDBOX_GIT_PRESET=relaxed run_captured_launcher "$CAPTURE_DIR_PRESET_ENV" "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-e><SANDBOX_GIT_PRESET=relaxed>"* ]] &&
+  ok "integration: env var git preset reaches Docker" ||
+  bad "integration: env var git preset reaches Docker ($CAPTURED_JOINED)"
+unset SANDBOX_GIT_PRESET
 
 # --- Extra mount (configure_extra_mounts) tests ---
 reset_extra_mounts() {
@@ -1277,7 +1345,7 @@ if [[ -s "$COMPLETION_FILE" ]]; then
         COMP_WORDS=("ai-sandbox" "--"); COMP_CWORD=1
         _ai_sandbox
         COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
-        [[ "$COMPLETION_JOINED" == *"--tool"* && "$COMPLETION_JOINED" == *"--allow-local-git"* && "$COMPLETION_JOINED" == *"--help"* ]] &&
+        [[ "$COMPLETION_JOINED" == *"--tool"* && "$COMPLETION_JOINED" == *"--allow-local-git"* && "$COMPLETION_JOINED" == *"--git-preset"* && "$COMPLETION_JOINED" == *"--help"* ]] &&
           ok "completion: options included in flag completion" ||
           bad "completion: options included in flag completion ($COMPLETION_JOINED)"
     else

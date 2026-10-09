@@ -58,6 +58,7 @@ The sandbox marker is always set. The selected profile's API key and enabled gen
 | `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy` | Host environment (if non-empty and passthrough enabled) | Configures lowercase-aware proxy clients |
 | `TZ` | Host environment (if non-empty) | Overrides the mounted system timezone when set |
 | `LANG`, `LANGUAGE`, standard `LC_*` | Host environment (if non-empty) | Carries the host locale preferences into the container |
+| `SANDBOX_GIT_PRESET` | Launcher (`git.policy.preset` / `SANDBOX_GIT_PRESET` / `--git-preset`) | Selects the git-wrapper policy preset (`strict` \| `daily` \| `relaxed`; default `daily`, unknown → `strict`) |
 
 Proxy environment passthrough is tool-neutral and defaults to enabled. `SANDBOX_PROXY_ENV_PASSTHROUGH` / `proxy.env_passthrough` can disable it. Uppercase and lowercase forms are independent and values are forwarded unchanged; proxy URLs are not stored in YAML.
 
@@ -75,7 +76,7 @@ Git config precedence is system < global, so a user's `~/.gitconfig` could overr
 
 ## Git operation policy
 
-A wrapper script at `share/ai-sandbox/git-wrapper` is bind-mounted to `/usr/local/bin/git` in the container (read-only). The `node:22-bookworm` image's default `PATH` has `/usr/local/bin` before `/usr/bin`, so `git` invocations hit the wrapper. The wrapper parses argv, applies a blocklist of destructive subcommands plus flag-level checks on allowed subcommands, then `exec`s `/usr/bin/git` for allowed commands.
+A wrapper script at `share/ai-sandbox/git-wrapper` is bind-mounted to `/usr/local/bin/git` in the container (read-only). The `node:22-bookworm` image's default `PATH` has `/usr/local/bin` before `/usr/bin`, so `git` invocations hit the wrapper. The wrapper parses argv and applies a strict baseline blocklist, lifted only by the active preset's named relaxations, then `exec`s `/usr/bin/git` for allowed commands. The active preset is chosen by `git.policy.preset` / `SANDBOX_GIT_PRESET` / `--git-preset` (default `daily`; unknown names fall back to `strict`).
 
 The wrapper does **not** strip user-supplied `-c` flags or `GIT_CONFIG_*` env vars. The defense is that push is blocked at the subcommand level, and `~/.gitconfig` is read-only.
 
@@ -83,9 +84,16 @@ The wrapper does **not** strip user-supplied `-c` flags or `GIT_CONFIG_*` env va
 
 ### Blocked operations
 
-- **Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `clean`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`
-- **Conditionally blocked:** `reflog expire|delete`, `notes remove|prune`, `worktree prune`, `stash drop|clear`, `branch -D|--delete --force` (force delete; safe `-d`/`--delete` allowed), `tag -f|--force` (force; safe `-d`/`--delete` allowed), `worktree remove -f|--force` (safe `remove` allowed: git itself refuses to remove a worktree with untracked or modified files unless forced)
-- **Flag-level blocks:** `commit --amend|--reset-author`, `checkout -B|-f|--force|-- <pathspec>`, `switch -C|--discard-changes`, `restore --worktree|-W`, `rm` (without `--cached`), `gc --prune`
+The policy is a strict baseline plus a preset's named relaxations.
+
+**Strict baseline (always applied, in every preset):**
+- **Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`
+- **Conditionally blocked:** `reflog expire|delete`, `notes remove|prune`, `worktree prune`, `worktree remove -f|--force` (safe `remove` allowed: git itself refuses to remove a worktree with untracked or modified files unless forced)
+- **Always-blocked flags:** `checkout -B`, `switch -C|--force-create`, `branch -f|--force` (force-move/reset), `gc --prune`
+
+**Preset-gated relaxations:**
+- `daily`: `commit --amend|--reset-author`, `checkout -f|--force|-- <pathspec>`, `switch --discard-changes|--discard`, `restore --worktree|-W`
+- `relaxed` (daily plus): `branch -D|--delete --force`, `tag -f|--force`, `stash drop|clear`, `clean`, `rm` (without `--cached`)
 
 `worktree prune` stays blocked even though it only deletes admin metadata: the sandbox does not mount other host worktrees' directories, so from inside the sandbox prune would consider them stale and delete their admin entries under `.git/worktrees`, breaking them on the host.
 

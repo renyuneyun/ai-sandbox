@@ -17,6 +17,10 @@ _ai_sandbox() {
             COMPREPLY=($(compgen -W "claude codex opencode" -- "$cur"))
             return 0
             ;;
+        --git-preset)
+            COMPREPLY=($(compgen -W "strict daily relaxed" -- "$cur"))
+            return 0
+            ;;
         serve)
             COMPREPLY=($(compgen -W "start stop attach" -- "$cur"))
             return 0
@@ -32,7 +36,7 @@ _ai_sandbox() {
 
     if [[ "${COMP_WORDS[1]:-}" == serve ]]; then
         if [[ "$cur" == -* ]]; then
-            COMPREPLY=($(compgen -W "--tool --hostname --port --headless --allow-local-git" -- "$cur"))
+            COMPREPLY=($(compgen -W "--tool --git-preset --hostname --port --headless --allow-local-git" -- "$cur"))
         else
             COMPREPLY=($(compgen -d -- "$cur"))
         fi
@@ -40,7 +44,7 @@ _ai_sandbox() {
     fi
 
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--help -h --version -V --tool --allow-local-git --" -- "$cur"))
+        COMPREPLY=($(compgen -W "--help -h --version -V --tool --git-preset --allow-local-git --" -- "$cur"))
         return 0
     fi
 
