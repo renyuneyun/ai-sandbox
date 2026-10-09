@@ -14,7 +14,11 @@ _ai_sandbox() {
 
     case "$prev" in
         --tool)
-            COMPREPLY=($(compgen -W "claude codex opencode" -- "$cur"))
+            if [[ "${COMP_WORDS[1]:-}" == serve ]]; then
+                COMPREPLY=($(compgen -W "opencode" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "claude codex opencode" -- "$cur"))
+            fi
             return 0
             ;;
         --git-preset)

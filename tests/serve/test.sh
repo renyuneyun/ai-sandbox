@@ -87,6 +87,17 @@ else
   echo "FAIL: start rejected: $(cat "$TMP/err")"; fail=1
 fi
 
+# --opt=value (single-token "=") form is accepted for serve the same as "--opt value".
+if run_launcher serve start --tool=opencode --hostname=10.44.55.66 --port=5080 "$TMP/project"; then
+  if tr '\0' ' ' < "$TMP/calls" | grep -q 'run -d .*opencode-ai@1.18.31 web --hostname 10.44.55.66 --port 5080'; then
+    echo 'PASS: detached server starts with --opt=value equals form'
+  else
+    echo 'FAIL: equals form server command'; fail=1
+  fi
+else
+  echo "FAIL: equals form start rejected: $(cat "$TMP/err")"; fail=1
+fi
+
 if run_launcher serve start "$TMP/project"; then
   if tr '\0' ' ' < "$TMP/calls" | grep -q 'opencode-ai@1.18.31 web --hostname 0.0.0.0 --port 4096'; then
     echo 'PASS: default bind accepts host, LAN, and ZeroTier interfaces'

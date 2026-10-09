@@ -233,6 +233,27 @@ parse_launcher_args() {
   WORKSPACE_ARG=""
   TOOL_USER_ARGS=()
 
+  # Accept the "--opt=value" single-token form alongside "--opt value" by
+  # expanding it into the two-token form the cases below already handle. Only
+  # value-taking options are split; a flag given a "=" value (e.g.
+  # --headless=true) is left intact and rejected by the unsupported-option
+  # catch-all below.
+  local _asb_args=()
+  while (($#)); do
+    case "$1" in
+      --tool=*|--git-preset=*|--hostname=*|--port=*)
+        _asb_args+=("${1%%=*}" "${1#*=}")
+        ;;
+      *)
+        _asb_args+=("$1")
+        ;;
+    esac
+    shift
+  done
+  if ((${#_asb_args[@]})); then
+    set -- "${_asb_args[@]}"
+  fi
+
   if [[ "${1:-}" == serve ]]; then
     shift
     SERVE_ACTION="${1:-}"

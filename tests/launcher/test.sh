@@ -134,6 +134,25 @@ assert_eq "parse: git-preset strict value" "strict" "${CLI_GIT_PRESET:-}"
 parse_launcher_args
 assert_eq "parse: no flag leaves CLI_GIT_PRESET empty" "" "${CLI_GIT_PRESET:-}"
 
+# --opt=value (single-token "=") form is accepted for every value-taking option.
+parse_launcher_args --tool=codex
+assert_eq "parse: tool equals form" "codex" "$CLI_TOOL"
+
+parse_launcher_args --tool=opencode@v2.0.18
+assert_eq "parse: tool equals form keeps @version" "opencode@v2.0.18" "$CLI_TOOL"
+
+parse_launcher_args --git-preset=relaxed
+assert_eq "parse: git-preset equals form" "relaxed" "${CLI_GIT_PRESET:-}"
+
+parse_launcher_args serve start --tool=opencode --hostname=lo --port=5080 /ws
+assert_eq "parse: serve equals form tool" "opencode" "$CLI_TOOL"
+assert_eq "parse: serve equals form action" "start" "$SERVE_ACTION"
+assert_eq "parse: serve equals form hostname" "127.0.0.1" "$SERVE_HOSTNAME"
+assert_eq "parse: serve equals form port" "5080" "$SERVE_PORT"
+assert_eq "parse: serve equals form workspace" "/ws" "$WORKSPACE_ARG"
+
+if parse_launcher_args --allow-local-git=true >/dev/null 2>&1; then bad "parse: flag with equals value rejected"; else ok "parse: flag with equals value rejected"; fi
+
 # Reset state
 unset CLI_ALLOW_LOCAL_GIT
 
@@ -1341,6 +1360,13 @@ if [[ -s "$COMPLETION_FILE" ]]; then
         [[ "$COMPLETION_JOINED" == *claude* && "$COMPLETION_JOINED" == *codex* && "$COMPLETION_JOINED" == *opencode* ]] &&
           ok "completion: --tool completes tool names" ||
           bad "completion: --tool completes tool names ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" "serve" "start" "--tool" ""); COMP_CWORD=4
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *opencode* && "$COMPLETION_JOINED" != *claude* && "$COMPLETION_JOINED" != *codex* ]] &&
+          ok "completion: serve --tool completes only opencode" ||
+          bad "completion: serve --tool completes only opencode ($COMPLETION_JOINED)"
 
         COMP_WORDS=("ai-sandbox" "--"); COMP_CWORD=1
         _ai_sandbox
