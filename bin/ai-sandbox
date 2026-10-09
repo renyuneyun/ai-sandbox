@@ -435,6 +435,27 @@ configure_proxy_env() {
   return 0
 }
 
+# Mirror the host's time and locale settings for every agent container.
+# /etc/localtime covers the system timezone when the host has no TZ override.
+configure_host_settings() {
+  HOST_SETTINGS_ENV_ARGS=()
+  HOST_SETTINGS_VOLUME_ARGS=()
+
+  local setting_name
+  for setting_name in \
+    TZ LANG LANGUAGE LC_ALL LC_CTYPE LC_COLLATE LC_MESSAGES LC_MONETARY \
+    LC_NUMERIC LC_TIME LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE \
+    LC_MEASUREMENT LC_IDENTIFICATION; do
+    [[ -n "${!setting_name:-}" ]] &&
+      HOST_SETTINGS_ENV_ARGS+=(-e "$setting_name=${!setting_name}")
+  done
+  [[ -f /etc/localtime ]] &&
+    HOST_SETTINGS_VOLUME_ARGS+=(-v /etc/localtime:/etc/localtime:ro)
+  [[ -f /etc/timezone ]] &&
+    HOST_SETTINGS_VOLUME_ARGS+=(-v /etc/timezone:/etc/timezone:ro)
+  return 0
+}
+
 # Expand a leading "~" or "~/" in a path to $HOME (the host home). Leaves
 # absolute and relative paths unchanged. Paths referencing other users
 # ("~user") are not expanded.
@@ -743,6 +764,7 @@ fi
 # Proxy environment passthrough applies to npx and every tool profile.
 SANDBOX_PROXY_ENV_PASSTHROUGH="$(resolve SANDBOX_PROXY_ENV_PASSTHROUGH .proxy.env_passthrough true)"
 configure_proxy_env
+configure_host_settings
 
 # Extra passthrough mounts: arbitrary host paths mounted into the sandbox on top
 # of the well-known tool-config dirs (e.g. CC Switch's own settings directory),
@@ -954,6 +976,8 @@ if [[ "$SANDBOX_PROGRESS" == "true" ]]; then
     -T \
     -e HOME="${SANDBOX_HOME}" \
     "${PROXY_ENV_ARGS[@]}" \
+    "${HOST_SETTINGS_ENV_ARGS[@]}" \
+    "${HOST_SETTINGS_VOLUME_ARGS[@]}" \
     ai-agent \
     npx --yes "$TOOL_PACKAGE" --version >/dev/null 2>&1 || warm_rc=$?
   progress_stop
@@ -978,6 +1002,8 @@ if [[ "$SERVE_ACTION" == start ]]; then
     -e HOME="${SANDBOX_HOME}" \
     "${SERVER_ENV_ARGS[@]}" \
     "${PROXY_ENV_ARGS[@]}" \
+    "${HOST_SETTINGS_ENV_ARGS[@]}" \
+    "${HOST_SETTINGS_VOLUME_ARGS[@]}" \
     "${TOOL_ENV_ARGS[@]}" \
     "${GIT_ENV_ARGS[@]}" \
     "${GIT_MODE_ENV_ARGS[@]}" \
@@ -1035,6 +1061,8 @@ docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml
   --rm \
   -e HOME="${SANDBOX_HOME}" \
   "${PROXY_ENV_ARGS[@]}" \
+  "${HOST_SETTINGS_ENV_ARGS[@]}" \
+  "${HOST_SETTINGS_VOLUME_ARGS[@]}" \
   "${TOOL_ENV_ARGS[@]}" \
   "${GIT_ENV_ARGS[@]}" \
   "${GIT_MODE_ENV_ARGS[@]}" \

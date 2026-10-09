@@ -159,6 +159,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
 - [x] **Transparent isolation** - the sandbox boundary is invisible to Claude Code: it sees the same user identity, credentials, paths, and Claude settings as on the host, while the rest of the system stays out of reach
     - [x] **Claude config passthrough** - the entire `~/.claude` directory (credentials, skills, settings, etc.) and `ANTHROPIC_API_KEY` are forwarded automatically
     - [x] **Host identity mirroring** - Claude Code runs as your host user (same UID, GID, username, and home path), so file ownership is consistent
+    - [x] **Host time and locale** - mounts the host's `/etc/localtime` and `/etc/timezone` read-only when available and forwards non-empty `TZ`, `LANG`, `LANGUAGE`, and standard `LC_*` variables to agent containers
     - [x] **Host network access** - the container shares the host network, so host-local services are reachable from inside (e.g. a proxy at `127.0.0.1:1080`, or a network-based MCP server running on the host)
     - [x] **On-host visible browser** - optional (`browser.enabled`) browser automation where the browser runs on the host (visible/interactive for the user) via a Playwright MCP server, driven from inside over host networking
     - [x] **Proxy environment passthrough** - standard uppercase and lowercase proxy variables are forwarded by default, with a global or per-workspace opt-out

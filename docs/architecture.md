@@ -39,6 +39,8 @@ A selected agent does not get a browser inside the container. Instead, browser a
 | Git-config bind | Host user | Host files persist; read-only in container |
 | Generated policy bind | One launcher invocation | Temporary host file removed by exit trap; read-only |
 | Git-wrapper bind | Package installation | Persists with installation; read-only |
+| Host `/etc/localtime` bind | Host system timezone, when the file exists | Read-only for each agent container |
+| Host `/etc/timezone` bind | Host timezone name, when the file exists | Read-only for each agent container |
 | Extra/auto passthrough bind | Host paths from `mounts.extra` / `mounts.auto` | Host files persist; read-only by default (manual `:rw` opts in; auto git-worktree is read-write) |
 
 The tool-config bind targets `${SANDBOX_HOME}/.claude` and `${SANDBOX_HOME}/.claude.json` for Claude, or `${SANDBOX_HOME}/.codex` for Codex. Each can be disabled independently. Bind mounts follow their host files' lifecycle; unlike them, the Docker-managed named volume outlives each ephemeral container.
@@ -54,8 +56,12 @@ The sandbox marker is always set. The selected profile's API key and enabled gen
 | `OPENAI_API_KEY` | Host environment (Codex, if set) | Authenticates Codex without host config |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Host environment (if non-empty and passthrough enabled) | Configures uppercase-aware proxy clients |
 | `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy` | Host environment (if non-empty and passthrough enabled) | Configures lowercase-aware proxy clients |
+| `TZ` | Host environment (if non-empty) | Overrides the mounted system timezone when set |
+| `LANG`, `LANGUAGE`, standard `LC_*` | Host environment (if non-empty) | Carries the host locale preferences into the container |
 
 Proxy environment passthrough is tool-neutral and defaults to enabled. `SANDBOX_PROXY_ENV_PASSTHROUGH` / `proxy.env_passthrough` can disable it. Uppercase and lowercase forms are independent and values are forwarded unchanged; proxy URLs are not stored in YAML.
+
+The `/etc/localtime` and `/etc/timezone` mounts and time/locale environment apply to warm-up, interactive, and OpenCode server containers. Containers share the host's kernel clock through Docker; the mounts control how that time is displayed and named when `TZ` is unset. Locale variables select preferences, but the container image must provide a requested locale for programs that require installed locale definitions.
 
 ## Root user mode
 

@@ -68,6 +68,36 @@ fi
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
 unset http_proxy https_proxy all_proxy no_proxy SANDBOX_PROXY_ENV_PASSTHROUGH
 
+# Host time and locale reach every agent run.
+if declare -F configure_host_settings >/dev/null; then
+    TZ='Pacific/Auckland' LANG='en_US.UTF-8' LC_TIME='C.UTF-8' LANGUAGE='en_US:en' configure_host_settings
+    HOST_SETTINGS_JOINED="$(printf '<%s>' "${HOST_SETTINGS_ENV_ARGS[@]}" "${HOST_SETTINGS_VOLUME_ARGS[@]}")"
+    [[ "$HOST_SETTINGS_JOINED" == *'<-e><TZ=Pacific/Auckland>'* &&
+       "$HOST_SETTINGS_JOINED" == *'<-e><LANG=en_US.UTF-8>'* &&
+       "$HOST_SETTINGS_JOINED" == *'<-e><LC_TIME=C.UTF-8>'* &&
+       "$HOST_SETTINGS_JOINED" == *'<-e><LANGUAGE=en_US:en>'* ]] &&
+      ok "host settings: timezone and locale are forwarded" ||
+      bad "host settings: timezone and locale are forwarded ($HOST_SETTINGS_JOINED)"
+    if [[ -f /etc/localtime ]]; then
+        [[ "$HOST_SETTINGS_JOINED" == *'<-v></etc/localtime:/etc/localtime:ro>'* ]] &&
+          ok "host settings: localtime is mounted read-only" ||
+          bad "host settings: localtime mount ($HOST_SETTINGS_JOINED)"
+    fi
+    if [[ -f /etc/timezone ]]; then
+        [[ "$HOST_SETTINGS_JOINED" == *'<-v></etc/timezone:/etc/timezone:ro>'* ]] &&
+          ok "host settings: timezone name is mounted read-only" ||
+          bad "host settings: timezone name mount ($HOST_SETTINGS_JOINED)"
+    fi
+    TZ='' LANG='' LC_TIME='' LANGUAGE='' configure_host_settings
+    HOST_SETTINGS_JOINED="$(printf '<%s>' "${HOST_SETTINGS_ENV_ARGS[@]}")"
+    [[ "$HOST_SETTINGS_JOINED" != *'<TZ='* && "$HOST_SETTINGS_JOINED" != *'<LANG='* &&
+       "$HOST_SETTINGS_JOINED" != *'<LC_TIME='* && "$HOST_SETTINGS_JOINED" != *'<LANGUAGE='* ]] &&
+      ok "host settings: empty values are omitted" ||
+      bad "host settings: empty values are omitted ($HOST_SETTINGS_JOINED)"
+else
+    bad "host settings: configure_host_settings function exists"
+fi
+
 parse_launcher_args
 assert_eq "parse: default workspace is empty sentinel" "" "$WORKSPACE_ARG"
 assert_eq "parse: no CLI tool override" "" "$CLI_TOOL"
@@ -459,7 +489,28 @@ run_captured_launcher() {
 CAPTURE_DIR="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR")
 TEST_HTTP_PROXY='http://codex-proxy.test:7890'
-run_captured_launcher "$CAPTURE_DIR" --tool codex "$SCRIPT_DIR/../.." -- --model "gpt test" resume
+LANG=C.UTF-8 run_captured_launcher "$CAPTURE_DIR" --tool codex "$SCRIPT_DIR/../.." -- --model "gpt test" resume
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *'<-e><LANG=C.UTF-8>'* ]] &&
+  ok "integration: host locale reaches interactive run" ||
+  bad "integration: host locale missing from interactive run ($CAPTURED_JOINED)"
+if [[ -f /etc/localtime ]]; then
+  [[ "$CAPTURED_JOINED" == *'<-v></etc/localtime:/etc/localtime:ro>'* ]] &&
+    ok "integration: host timezone reaches interactive run" ||
+    bad "integration: host timezone missing from interactive run ($CAPTURED_JOINED)"
+fi
+TIME_CAPTURE_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$TIME_CAPTURE_DIR")
+TZ='Pacific/Auckland' run_captured_launcher "$TIME_CAPTURE_DIR" --tool codex "$SCRIPT_DIR/../.."
+TIME_CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$TIME_CAPTURED_JOINED" == *'<-e><TZ=Pacific/Auckland>'* ]] &&
+  ok "integration: host TZ override reaches interactive run" ||
+  bad "integration: host TZ override missing from interactive run ($TIME_CAPTURED_JOINED)"
+WARMUP_JOINED="$(xargs -0 -I '{}' printf '<%s>' '{}' < "$TIME_CAPTURE_DIR/docker.args.1")"
+[[ "$WARMUP_JOINED" == *'<-e><TZ=Pacific/Auckland>'* ]] &&
+  ok "integration: host TZ override reaches warm-up run" ||
+  bad "integration: host TZ override missing from warm-up run ($WARMUP_JOINED)"
+mapfile -d '' -t CAPTURED_DOCKER_ARGS < "$CAPTURE_DIR/docker.args"
 CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
 [[ "$CAPTURED_JOINED" == *"<@openai/codex"* ]] &&
   ok "integration: Codex package reaches Docker" ||

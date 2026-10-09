@@ -6,6 +6,9 @@
 #
 # All fields are optional. Uncomment and edit the values you want to change.
 # Precedence per knob: env var > workspace config > user config > built-in default.
+# Host time/locale are automatic: /etc/localtime and /etc/timezone are mounted
+# read-only when present; non-empty TZ, LANG, LANGUAGE, and standard LC_* env
+# vars are forwarded.
 
 # Coding agent to run. Supported values: claude, codex, opencode.
 # A version can be bundled as "tool@version" (e.g. opencode@v1.29.11) to pin

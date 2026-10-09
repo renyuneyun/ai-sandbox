@@ -120,6 +120,10 @@ SANDBOX_UID=4444 SANDBOX_GID=4444 SANDBOX_USERNAME=ryey ai-sandbox
 
 When `SANDBOX_UID=0`, the container runs as root and the user-creation step is skipped.
 
+## Host time and locale
+
+The launcher mounts the host's `/etc/localtime` and `/etc/timezone` read-only when they exist, so the container uses the host's system timezone and its timezone name. If the host sets `TZ`, the launcher forwards that value as well; `TZ` takes precedence over `/etc/localtime` for programs that honor it. It also forwards non-empty `LANG`, `LANGUAGE`, and standard `LC_*` locale variables. These settings apply to package warm-up, interactive agents, and the OpenCode server. No YAML setting is needed. A locale name still needs to be available in the container image for programs that depend on installed locale definitions.
+
 ## Git identity
 
 Two knobs control git identity inside the sandbox:
