@@ -202,26 +202,32 @@ git:
   # The effective policy can be inspected inside the container:
   #   cat /etc/ai-sandbox/git-policy.conf
   #
-  # Default policy (built-in, for reference):
-  #   Fully blocked subcommands:
-  #     push, reset, rebase, filter-branch, filter-repo, clean, config,
-  #     commit-tree, update-ref, replace, fast-import, prune, symbolic-ref
-  #   Conditionally blocked (sub-subcommand or flag):
-  #     reflog expire|delete
-  #     notes remove|prune
-  #     worktree prune
-  #     stash drop|clear
-  #     branch -D|--delete --force (safe -d/--delete allowed)
-  #     tag -f|--force (safe -d/--delete allowed)
-  #     worktree remove -f|--force (safe remove allowed)
-  #     commit --amend|--reset-author
-  #     checkout -B|-f|--force|-- <pathspec>
-  #     switch -C|--discard-changes
-  #     restore --worktree|-W
-  #     rm (without --cached)
+  # Built-in policy = a strict baseline plus the selected preset's named
+  # relaxations (git.policy.preset, default "daily").
+  #
+  #   Strict baseline (always applied unless relaxed):
+  #     push, reset, rebase, filter-branch, filter-repo, config, commit-tree,
+  #     update-ref, replace, fast-import, prune, symbolic-ref
+  #     reflog expire|delete     notes remove|prune
+  #     worktree prune           worktree remove -f|--force
+  #     branch -f|--force (force-move/reset a branch ref)
+  #     checkout -B              switch -C|--force-create
   #     gc --prune
+  #
+  #   daily relaxations (default):
+  #     checkout -f|--force|-- <pathspec>     switch --discard-changes
+  #     restore --worktree|-W                 commit --amend|--reset-author
+  #
+  #   relaxed relaxations (daily plus):
+  #     branch -D|--delete --force            tag -f|--force
+  #     stash drop|clear                      clean
+  #     rm (without --cached)
+  #
   #   Everything else is allowed.
   policy:
+    # Preset: strict | daily (default) | relaxed. Unknown names fall back to
+    # strict. Overridable per invocation with SANDBOX_GIT_PRESET or --git-preset.
+    # preset: daily
     allow:
       # - "^reset"           # allow all reset forms (--hard, --soft, etc.)
       # - "^commit --amend"  # allow amend

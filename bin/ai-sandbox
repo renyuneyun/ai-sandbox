@@ -86,6 +86,12 @@ OPTIONS:
                                   @version to pin it, e.g. --tool opencode@2.5.0.
   --allow-local-git                Block only git push; allow other local git
                                   operations (the git local-override mode).
+  --git-preset <strict|daily|relaxed>
+                                   Git policy preset (default: daily). daily
+                                   allows bounded working-tree discards and
+                                   commit --amend; strict blocks them; relaxed
+                                   additionally allows branch/tag force-delete,
+                                   stash drop, clean, rm.
   --hostname <ADDRESS|all|lo>      Server bind address (default: all / 0.0.0.0).
   --port <PORT>                     Server port (default: 4096).
   --headless                        Use the API-only server instead of the web UI.
@@ -219,6 +225,7 @@ parse_launcher_args() {
   CLI_TOOL=""
   CLI_TOOL_VERSION=""
   CLI_ALLOW_LOCAL_GIT=""
+  CLI_GIT_PRESET=""
   SERVE_ACTION=""
   SERVE_HOSTNAME="0.0.0.0"
   SERVE_PORT="4096"
@@ -246,6 +253,11 @@ parse_launcher_args() {
       --allow-local-git)
         CLI_ALLOW_LOCAL_GIT=true
         shift
+        ;;
+      --git-preset)
+        (($# >= 2)) || { launcher_error "--git-preset requires a preset name (strict, daily, or relaxed)"; return; }
+        CLI_GIT_PRESET="$2"
+        shift 2
         ;;
       --tool)
         (($# >= 2)) || { launcher_error "--tool requires claude, codex or opencode"; return; }
@@ -318,6 +330,19 @@ resolve_allow_local() {
     selected="$cli_value"
   else
     selected="$(resolve SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS .git.allow_local_operations false)"
+  fi
+  echo "$selected"
+}
+
+# Resolve the git-policy preset name. CLI --git-preset wins, else
+# resolve() from env/config; default "daily". The launcher stays ignorant of
+# the wrapper's preset catalog — the wrapper maps unknown names to strict.
+resolve_git_preset() {
+  local cli_value="$1" selected
+  if [[ -n "$cli_value" ]]; then
+    selected="$cli_value"
+  else
+    selected="$(resolve SANDBOX_GIT_PRESET .git.policy.preset daily)"
   fi
   echo "$selected"
 }
@@ -876,6 +901,10 @@ SANDBOX_GIT_POLICY_BLOCK="$(resolve_list SANDBOX_GIT_POLICY_BLOCK .git.policy.bl
 # and ignores the user policy file. CLI flag > env > config > default.
 SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS="$(resolve_allow_local "$CLI_ALLOW_LOCAL_GIT")"
 
+# Git policy preset: the named set of relaxations the wrapper applies on top
+# of its strict baseline. CLI flag > env > config > default (daily).
+SANDBOX_GIT_PRESET="$(resolve_git_preset "$CLI_GIT_PRESET")"
+
 GIT_POLICY_VOLUME_ARGS=()
 if [[ -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ]]; then
     if [[ "$SERVE_ACTION" == start ]]; then
@@ -893,10 +922,13 @@ if [[ -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ]]; then
 fi
 
 # Git local-override env var: passed into the container only when true.
+# The preset is always passed (the wrapper defaults to daily otherwise, but
+# being explicit keeps the launcher's config the single source of truth).
 GIT_MODE_ENV_ARGS=()
 if [[ "$SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS" == "true" ]]; then
     GIT_MODE_ENV_ARGS+=(-e SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS=true)
 fi
+GIT_MODE_ENV_ARGS+=(-e SANDBOX_GIT_PRESET="$SANDBOX_GIT_PRESET")
 
 # Warn when local-override is on but user policy lists are also set (they'll be ignored).
 if [[ "$SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS" == "true" && \

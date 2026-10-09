@@ -8,6 +8,7 @@ _ai-sandbox() {
         _arguments -s -S \
             '2:action:(start stop attach)' \
             '--tool=[Select the tool]:tool:(opencode)' \
+            '--git-preset=[Git policy preset]:preset:(strict daily relaxed)' \
             '--hostname=[Server listen address]:address:(all lo)' \
             '--port=[Server port]:port:' \
             '--headless[Run API server without web UI]' \
@@ -20,6 +21,7 @@ _ai-sandbox() {
         '(-h --help)'{-h,--help}'[Show help]'
         '(-V --version)'{-V,--version}'[Show version]'
         '--tool=[Select the tool]:tool:(claude codex opencode)'
+        '--git-preset=[Git policy preset]:preset:(strict daily relaxed)'
         '--allow-local-git[Block only git push; allow other local git operations]'
     )
     _arguments -s -S $opts \

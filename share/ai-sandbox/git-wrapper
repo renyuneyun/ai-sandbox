@@ -68,6 +68,27 @@ if [[ "$ALLOW_LOCAL" == "true" ]]; then
     exec "$REAL_GIT" "$@"
 fi
 
+# --- Presets ---
+# A preset is the strict baseline (the block checks below) plus a set of named
+# relaxations. "strict" relaxes nothing. "daily" (default) relaxes bounded
+# working-tree discards and commit --amend; "relaxed" additionally relaxes
+# reflog-recoverable local history edits. Unknown preset names fall back to
+# strict (no relaxations) as a fail-safe. See docs/configuration.md.
+preset_flags() {
+    case "${1:-daily}" in
+        daily)   printf 'discard amend' ;;
+        relaxed) printf 'discard amend branch_delete_force tag_force stash_drop clean rm' ;;
+        *)       : ;;  # strict or unknown -> no relaxations
+    esac
+}
+
+# True when the active preset relaxes the named rule.
+has_flag() {
+    [[ -n "$PRESET_FLAGS" && " $PRESET_FLAGS " == *" $1 "* ]]
+}
+
+PRESET_FLAGS="$(preset_flags "${SANDBOX_GIT_PRESET:-daily}")"
+
 # --- User policy file (patches the default policy) ---
 # Format: [allow] and [block] section headers, one regex per line.
 # Lines starting with # or empty are skipped. Regex is ERE, matched
@@ -102,8 +123,14 @@ fi
 # --- Policy checks ---
 
 case "$subcommand" in
-    push|reset|rebase|filter-branch|filter-repo|clean|config|commit-tree|update-ref|replace|fast-import|prune|symbolic-ref)
+    push|reset|rebase|filter-branch|filter-repo|config|commit-tree|update-ref|replace|fast-import|prune|symbolic-ref)
         block "git $subcommand is blocked by ai-sandbox."
+        ;;
+    clean)
+        # Deletes untracked files (unrecoverable); relaxed only by "relaxed".
+        if ! has_flag clean; then
+            block "git clean is blocked by ai-sandbox."
+        fi
         ;;
     reflog)
         for ((j=subcommand_idx+1; j<=$#; j++)); do
@@ -153,18 +180,23 @@ case "$subcommand" in
         fi
         ;;
     commit)
+        # --amend/--reset-author rewrite only the latest commit (reflog-
+        # recoverable); relaxed by "amend" (daily, relaxed).
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 --amend|--reset-author)
-                    block "git commit ${!j} is blocked by ai-sandbox."
+                    if ! has_flag amend; then
+                        block "git commit ${!j} is blocked by ai-sandbox."
+                    fi
                     ;;
             esac
         done
         ;;
     tag)
-        # Block any force form (-f, --force, -df, --delete --force).
-        # Safe delete (-d, --delete without force) is allowed: the tagged
-        # commit stays in the object db and reflog; gc --prune is blocked.
+        # Block any force form (-f, --force, -df, --delete --force) unless
+        # relaxed by "tag_force". Safe delete (-d, --delete without force) is
+        # always allowed: the tagged commit stays in the object db and reflog;
+        # gc --prune is blocked.
         has_force=false
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             arg="${!j}"
@@ -177,14 +209,17 @@ case "$subcommand" in
                     ;;
             esac
         done
-        if $has_force; then
+        if $has_force && ! has_flag tag_force; then
             block "git tag --force is blocked by ai-sandbox."
         fi
         ;;
     branch)
-        # Block force delete (-D, -df, --delete --force) but allow safe
-        # delete (-d, --delete): git itself refuses to delete unmerged
-        # branches with -d, and commits stay recoverable via reflog.
+        # Force delete (-D, -df, --delete --force) is relaxed by
+        # "branch_delete_force"; safe delete (-d, --delete) is always allowed
+        # (git itself refuses to delete unmerged branches, and commits stay
+        # recoverable via reflog). Force MOVE/reset (-f / --force without
+        # delete) rewrites the branch ref and is always blocked, like
+        # reset/update-ref.
         has_delete=false
         has_force=false
         for ((j=subcommand_idx+1; j<=$#; j++)); do
@@ -202,57 +237,85 @@ case "$subcommand" in
                     ;;
             esac
         done
-        if $has_delete && $has_force; then
+        if $has_force && ! $has_delete; then
+            block "git branch --force (move/reset) is blocked by ai-sandbox."
+        fi
+        if $has_delete && $has_force && ! has_flag branch_delete_force; then
             block "git branch --delete --force is blocked by ai-sandbox."
         fi
         ;;
     stash)
+        # drop/clear discard stashed state; relaxed by "stash_drop".
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
                 drop|clear)
-                    block "git stash ${!j} is blocked by ai-sandbox."
+                    if ! has_flag stash_drop; then
+                        block "git stash ${!j} is blocked by ai-sandbox."
+                    fi
                     ;;
             esac
         done
         ;;
     checkout)
+        # -B force-resets a branch ref (always blocked). -f / --force /
+        # -- <pathspec> discard working-tree changes; relaxed by "discard".
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             arg="${!j}"
             case "$arg" in
                 --force)
-                    block "git checkout $arg is blocked by ai-sandbox."
+                    if ! has_flag discard; then
+                        block "git checkout $arg is blocked by ai-sandbox."
+                    fi
                     ;;
                 --)
-                    block "git checkout -- <pathspec> is blocked by ai-sandbox."
+                    if ! has_flag discard; then
+                        block "git checkout -- <pathspec> is blocked by ai-sandbox."
+                    fi
                     ;;
                 -[!-]*)
-                    if [[ "$arg" == *[Bf]* ]]; then
+                    if [[ "$arg" == *B* ]]; then
                         block "git checkout $arg is blocked by ai-sandbox."
+                    elif [[ "$arg" == *f* ]]; then
+                        if ! has_flag discard; then
+                            block "git checkout $arg is blocked by ai-sandbox."
+                        fi
                     fi
                     ;;
             esac
         done
         ;;
     restore)
-        for ((j=subcommand_idx+1; j<=$#; j++)); do
-            arg="${!j}"
-            case "$arg" in
-                --worktree)
-                    block "git restore $arg is blocked by ai-sandbox."
-                    ;;
-                -[!-]*)
-                    if [[ "$arg" == *W* ]]; then
+        # restore only touches the working tree and index (committed content
+        # intact); --worktree / -W are relaxed by "discard".
+        if ! has_flag discard; then
+            for ((j=subcommand_idx+1; j<=$#; j++)); do
+                arg="${!j}"
+                case "$arg" in
+                    --worktree)
                         block "git restore $arg is blocked by ai-sandbox."
-                    fi
-                    ;;
-            esac
-        done
+                        ;;
+                    -[!-]*)
+                        if [[ "$arg" == *W* ]]; then
+                            block "git restore $arg is blocked by ai-sandbox."
+                        fi
+                        ;;
+                esac
+            done
+        fi
         ;;
     switch)
+        # -C / --force-create reset a branch ref (always blocked).
+        # --discard-changes / --discard discard working changes; relaxed by
+        # "discard".
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             arg="${!j}"
             case "$arg" in
                 --dis*)
+                    if ! has_flag discard; then
+                        block "git switch $arg is blocked by ai-sandbox."
+                    fi
+                    ;;
+                --force-c*)
                     block "git switch $arg is blocked by ai-sandbox."
                     ;;
                 -[!-]*)
@@ -264,6 +327,8 @@ case "$subcommand" in
         done
         ;;
     rm)
+        # rm without --cached deletes a tracked file and stages the deletion
+        # (content remains in HEAD); relaxed by "rm".
         has_cached=false
         for ((j=subcommand_idx+1; j<=$#; j++)); do
             case "${!j}" in
@@ -272,7 +337,7 @@ case "$subcommand" in
                     ;;
             esac
         done
-        if ! $has_cached; then
+        if ! $has_cached && ! has_flag rm; then
             block "git rm without --cached is blocked by ai-sandbox."
         fi
         ;;

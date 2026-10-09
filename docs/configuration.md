@@ -86,6 +86,7 @@ git:
   host_config_passthrough: true  # bool, default: true
   allow_local_operations: false  # bool, default: false
   policy:
+    preset: daily       # strict | daily | relaxed, default: daily
     allow:              # list of regex (ERE), default: empty
       - "^reset"
       - "^commit --amend"
@@ -368,11 +369,12 @@ Stubs are harmless (empty dirs); this is a minor optimization.
 
 ## Git policy config
 
-The built-in git operation policy (see [Git policy](#git-policy) below) blocks destructive git operations. Customize it with regex-based allow/block lists that patch the default:
+The built-in git operation policy (see [Git policy](#git-policy) below) blocks destructive git operations. Pick a **preset** to set the overall strictness, then optionally patch it with regex-based allow/block lists:
 
 ```yaml
 git:
   policy:
+    preset: daily        # strict | daily (default) | relaxed
     allow:
       - "^reset"           # allow all reset forms (--hard, --soft, etc.)
       - "^commit --amend"  # allow amend
@@ -380,14 +382,28 @@ git:
       - "^stash pop"       # block stash pop (example)
 ```
 
+The preset selects a named set of relaxations applied on top of the built-in strict block list:
+
+| Preset | Relaxations over the strict baseline |
+|---|---|
+| `strict` | none (the full block list below) |
+| `daily` (default) | bounded working-tree discards — `checkout -f`/`--force`/`-- <pathspec>`, `switch --discard-changes`, `restore --worktree`/`-W` — plus `commit --amend`/`--reset-author` |
+| `relaxed` | `daily` plus `branch -D`/`--delete --force`, `tag -f`/`--force`, `stash drop`/`clear`, `clean`, and `rm` (without `--cached`) |
+
+History/ref rewriting and remote operations stay blocked in every preset: `push`, `reset`, `rebase`, `checkout -B`, `switch -C`/`--force-create`, `branch -f` (force-move), and the plumbing commands. An unknown preset name falls back to `strict` (no relaxations) as a fail-safe.
+
+The preset is selectable per repo (`git.policy.preset`), per invocation (`SANDBOX_GIT_PRESET` env var), or via CLI (`--git-preset`).
+
 Patterns are extended regex (ERE), matched against the git subcommand + args (global flags like `-C` are stripped first). Substring match by default; use `^` and `$` to anchor.
 
 **Precedence** (first match wins):
 
-1. User `allow` rules - if a pattern matches, the command runs even if the default would block it.
-2. User `block` rules - if a pattern matches, the command is blocked even if the default allows it.
-3. Built-in default policy (see list below).
-4. Allowed (exec real git).
+1. `git.allow_local_operations` - if `true`, only `push` is blocked and everything else runs (see [Local-override mode](#local-override-mode)).
+2. User `allow` rules - if a pattern matches, the command runs even if the default would block it.
+3. User `block` rules - if a pattern matches, the command is blocked even if the preset/default allows it.
+4. Preset relaxations - the selected preset's named relaxations lift specific built-in blocks.
+5. Built-in strict baseline (see [Git policy](#git-policy)).
+6. Allowed (exec real git).
 
 To inspect the effective policy inside the container:
 
@@ -395,7 +411,7 @@ To inspect the effective policy inside the container:
 cat /etc/ai-sandbox/git-policy.conf
 ```
 
-The file is only present when `git.policy` is set. When neither `allow` nor `block` is configured, the wrapper uses the built-in default policy directly.
+The file is only present when `git.policy.allow` or `git.policy.block` is set. The preset is resolved independently (defaulting to `daily`) and passed to the wrapper via `SANDBOX_GIT_PRESET`.
 
 ## Local-override mode
 
@@ -421,26 +437,43 @@ Inside the sandbox, `git` is a wrapper script that blocks destructive operations
 
 Block messages include guidance for the AI agent: the restriction is intentional and must not be bypassed. `git push` is always blocked; other destructive operations are generally prohibited. The agent is prompted to reconsider whether the underlying operation is genuinely needed and aligns with the user's intent, rather than asking the user to authorize individual operations.
 
-**Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `clean`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`.
+The policy is a strict baseline plus a preset's named relaxations (`strict`, `daily` [default], or `relaxed`; see [Git policy config](#git-policy-config) for the table).
 
-**Conditionally blocked subcommands:** `reflog expire|delete`, `notes remove|prune`, `worktree prune`, `stash drop|clear`, `branch -D|--delete --force` (force delete; safe `-d`/`--delete` allowed), `tag -f|--force` (force; safe `-d`/`--delete` allowed), `worktree remove -f|--force` (force remove; safe `remove` allowed — git itself refuses to remove a worktree with untracked or modified files unless forced).
+**Strict baseline — always applied, in every preset:**
+
+- **Fully blocked subcommands:** `push`, `reset`, `rebase`, `filter-branch`, `filter-repo`, `config`, `commit-tree`, `update-ref`, `replace`, `fast-import`, `prune`, `symbolic-ref`.
+- **Conditionally blocked subcommands:** `reflog expire|delete`, `notes remove|prune`, `worktree prune`, `worktree remove -f|--force` (safe `remove` allowed — git itself refuses to remove a worktree with untracked or modified files unless forced).
 
 `worktree prune` stays fully blocked even though it only deletes admin metadata (under `.git/worktrees`): the sandbox does not mount other host worktrees' directories, so from inside the sandbox prune would consider them stale and delete their admin entries, breaking them on the host.
 
-**Flag-level blocks on allowed subcommands:**
+**Always-blocked flags on allowed subcommands** (ref resets, not preset-relaxable):
 
 | Subcommand | Blocked flags |
 |---|---|
-| `commit` | `--amend`, `--reset-author` |
-| `checkout` | `-B`, `-f`, `--force`, `-- <pathspec>` |
-| `switch` | `-C`, `--discard-changes` |
-| `restore` | `--worktree`, `-W` |
-| `rm` | (without `--cached`) |
+| `checkout` | `-B` |
+| `switch` | `-C`, `--force-create` |
+| `branch` | `-f`, `--force` (force-move/reset a branch ref) |
 | `gc` | `--prune` |
 
+**Preset-gated flags** (blocked in `strict`, lifted by the named relaxation):
+
+| Flag | Relaxing preset(s) |
+|---|---|
+| `commit --amend`, `commit --reset-author` | `daily`, `relaxed` |
+| `checkout -f`, `checkout --force`, `checkout -- <pathspec>` | `daily`, `relaxed` |
+| `switch --discard-changes`, `switch --discard` | `daily`, `relaxed` |
+| `restore --worktree`, `restore -W` | `daily`, `relaxed` |
+| `branch -D`, `branch --delete --force` | `relaxed` |
+| `tag -f`, `tag --force` | `relaxed` |
+| `stash drop`, `stash clear` | `relaxed` |
+| `clean` | `relaxed` |
+| `rm` (without `--cached`) | `relaxed` |
+
 `git config` is blocked entirely (including reads) because allowing `git config --local` writes would let Claude define an alias like `alias.x = !/usr/bin/git push` that bypasses the wrapper. Use `cat ~/.gitconfig` or `cat .git/config` to read config.
+
+**Conceptual model (known assumption):** the policy is a *blocklist with named preset relaxations*, not a per-operation allowlist. Each relaxation is an explicit, reviewed call that moves the policy away from "everything allowed"; the default stays safe by construction. If a future need arises for an allowlist model (e.g. "only these exact commands, in any repo"), it should be layered as a separate opt-in mode rather than refitting the presets.
 
 **Known limitations:**
 - The wrapper is a soft barrier. Calling `/usr/bin/git` by absolute path bypasses it. This is consistent with the project's threat model (accidental damage, not adversarial resistance).
 - The wrapper does not strip `-c` flags or `GIT_CONFIG_*` env vars. A command like `git -c alias.x='!/usr/bin/git push' x` would bypass the push block. This is acceptable because push is also blocked by system git config (defense in depth), and the threat model is non-adversarial.
-- Long-flag abbreviations (e.g., `--forc` for `--force`) bypass flag-level checks in subcommands that use exact-match patterns (`commit`, `tag`, `branch`, `checkout`, `restore`, `worktree`). The `rm` and `gc` cases use prefix matching and are not affected. Claude uses full flag names in practice, so this is a low-risk gap.
+- Long-flag abbreviations (e.g., `--forc` for `--force`) bypass flag-level checks in subcommands that use exact-match patterns (`commit`, `tag`, `branch`, `checkout`, `restore`, `worktree`). The `rm` and `gc` cases use prefix matching and are not affected. `switch` uses prefix matching too (`--dis*`, `--force-c*`), but a bare `--force` (a full-word abbreviation of `--force-create`) would still slip past `--force-c*`. Claude uses full flag names in practice, so this is a low-risk gap.
