@@ -422,8 +422,8 @@ chmod +x "$STUB_BIN/opencode"
 OLD_PATH="$PATH"
 PATH="$STUB_BIN:$PATH"
 configure_tool opencode
-assert_eq "profile OpenCode: host v2 is ignored for the default" "opencode-ai" "$TOOL_PACKAGE"
-assert_eq "profile OpenCode: host v2 default has no standalone flag" "1" "${#TOOL_DEFAULT_ARGS[@]}"
+assert_eq "profile OpenCode: host v2 version fallback" "@opencode/cli@2.0.12" "$TOOL_PACKAGE"
+assert_eq "profile OpenCode: host v2 uses standalone" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
 PATH="$OLD_PATH"
 
 reset_profile_context

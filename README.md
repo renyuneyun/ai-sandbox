@@ -50,7 +50,7 @@ ai-sandbox --tool codex
 asb-codex                # per-tool alias, equivalent to: ai-sandbox --tool codex
 asb-codex ~/projects/my-app -- --model gpt-5.4
 ai-sandbox --tool opencode
-ai-sandbox --tool opencode@v1.29.11          # pin a specific tool version
+ai-sandbox --tool opencode@v2.0.18           # pin a specific tool version
 ai-sandbox ~/projects/my-app -- --resume
 ai-sandbox --help         # full usage reference (options, aliases, examples)
 ai-sandbox --version
@@ -64,11 +64,11 @@ A tool version can be bundled into the `--tool` spec (`ai-sandbox --tool codex@1
 
 Set `AI_SANDBOX_DIR` to override the directory containing `docker-compose.yml`.
 
-Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Each defaults to the corresponding host CLI version, or npm's latest when that CLI is not installed.
+Set `CLAUDE_VERSION`, `CODEX_VERSION`, or `OPENCODE_VERSION` to pin the selected tool version inside the container. Claude and Codex default to the corresponding host CLI version, or npm's latest when absent. OpenCode defaults to its host CLI version, or v1 when absent.
 
-OpenCode v1 and v2 are separate npm packages: a `1.x` version (and no pinned version — the v1 default) runs the legacy `opencode-ai` package, while `2.x` runs `@opencode/cli`. An installed host opencode **v1** is mirrored, but a host opencode **v2** is ignored and still defaults to v1; use v2 only when pinned via `OPENCODE_VERSION` or `opencode.version`.
+OpenCode v1 and v2 are separate npm packages: `1.x` runs `opencode-ai`, while `2.x` runs `@opencode/cli`. The launcher mirrors the installed host OpenCode version when one is available; without one or an explicit pin, it defaults to v1. Pin a version with `--tool opencode@2.0.18`, `OPENCODE_VERSION`, or `opencode.version`.
 
-**OpenCode v2 limitation:** v2 is single-instance only. It runs one managed background server on a fixed loopback port, so it cannot run multiple simultaneous sessions — two `--tool opencode` sandboxes, or a sandbox alongside a host-side opencode v2, collide on that port and fail or hang at startup. For concurrent runs (including alongside a host opencode), use opencode **v1**, which is the default. v2 launches with `--standalone` (a private server instead of its managed background service) because the container shares the host's network namespace and the background service's fixed loopback port would collide with a host-side instance, leaving the TUI hanging at startup.
+OpenCode v2 launches with `--standalone`, giving each TUI a private server and avoiding its managed background service's fixed port on the shared host network. The existing OpenCode config and data mounts remain shared with the host. Concurrent v2 sessions are available for testing, but shared OpenCode state may still cause contention; this launcher does not isolate v2's data store per workspace.
 
 ### OpenCode v1 server for mobile access
 
