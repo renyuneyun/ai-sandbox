@@ -1,1 +1,3 @@
 .worktrees/
+.ai-sandbox.yaml
+.playwright-mcp/
