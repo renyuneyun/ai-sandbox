@@ -134,6 +134,34 @@ assert_eq "parse: git-preset strict value" "strict" "${CLI_GIT_PRESET:-}"
 parse_launcher_args
 assert_eq "parse: no flag leaves CLI_GIT_PRESET empty" "" "${CLI_GIT_PRESET:-}"
 
+parse_launcher_args --runtime bwrap
+assert_eq "parse: runtime sets CLI_RUNTIME" "bwrap" "${CLI_RUNTIME:-}"
+parse_launcher_args --runtime=opencode-only
+assert_eq "parse: runtime equals form" "opencode-only" "${CLI_RUNTIME:-}"
+parse_launcher_args --read-home
+assert_eq "parse: read-home sets CLI_READ_HOME" "true" "${CLI_READ_HOME:-}"
+parse_launcher_args
+assert_eq "parse: no runtime leaves CLI_RUNTIME empty" "" "${CLI_RUNTIME:-}"
+assert_eq "parse: no read-home leaves CLI_READ_HOME empty" "" "${CLI_READ_HOME:-}"
+if parse_launcher_args --runtime >/dev/null 2>&1; then bad "parse: missing runtime value"; else ok "parse: missing runtime value"; fi
+if parse_launcher_args --read-home=true >/dev/null 2>&1; then bad "parse: read-home equals value rejected"; else ok "parse: read-home equals value rejected"; fi
+
+WORKSPACE_CONFIG_VALID=false
+USER_CONFIG_VALID=false
+unset SANDBOX_RUNTIME SANDBOX_BWRAP_READ_HOME
+assert_eq "resolve_runtime: default docker" "docker" "$(resolve_runtime "")"
+assert_eq "resolve_runtime: CLI wins" "bwrap" "$(resolve_runtime bwrap)"
+SANDBOX_RUNTIME=bwrap
+assert_eq "resolve_runtime: env" "bwrap" "$(resolve_runtime "")"
+assert_eq "resolve_runtime: CLI beats env" "docker" "$(resolve_runtime docker)"
+unset SANDBOX_RUNTIME
+assert_eq "resolve_read_home: default false" "false" "$(resolve_read_home "")"
+assert_eq "resolve_read_home: CLI true" "true" "$(resolve_read_home true)"
+SANDBOX_BWRAP_READ_HOME=true
+assert_eq "resolve_read_home: env true" "true" "$(resolve_read_home "")"
+assert_eq "resolve_read_home: CLI true beats env" "true" "$(resolve_read_home true)"
+unset SANDBOX_BWRAP_READ_HOME
+
 # --opt=value (single-token "=") form is accepted for every value-taking option.
 parse_launcher_args --tool=codex
 assert_eq "parse: tool equals form" "codex" "$CLI_TOOL"
@@ -1333,6 +1361,14 @@ CAPTURE_DIR_NOWARM="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_NOWARM")
 SANDBOX_PROGRESS=false run_captured_launcher "$CAPTURE_DIR_NOWARM" "$SCRIPT_DIR/../.."
 assert_eq "progress: disabled skips warm-up" "1" "$(cat "$CAPTURE_DIR_NOWARM/docker.args.count")"
+
+# Runtime dispatch: bwrap must not invoke docker.
+CAPTURE_DIR_BWRAP_DISPATCH="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BWRAP_DISPATCH")
+run_captured_launcher "$CAPTURE_DIR_BWRAP_DISPATCH" --runtime bwrap "$SCRIPT_DIR/../.." || true
+[[ ! -e "$CAPTURE_DIR_BWRAP_DISPATCH/docker.args" ]] &&
+  ok "dispatch: bwrap runtime does not call docker" ||
+  bad "dispatch: bwrap runtime does not call docker"
 
 # Static per-phase lines appear on stderr in non-TTY mode.
 CAPTURE_DIR_STATIC="$(mktemp -d)"

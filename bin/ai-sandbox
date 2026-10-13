@@ -226,6 +226,8 @@ parse_launcher_args() {
   CLI_TOOL_VERSION=""
   CLI_ALLOW_LOCAL_GIT=""
   CLI_GIT_PRESET=""
+  CLI_RUNTIME=""
+  CLI_READ_HOME=""
   SERVE_ACTION=""
   SERVE_HOSTNAME="0.0.0.0"
   SERVE_PORT="4096"
@@ -241,7 +243,7 @@ parse_launcher_args() {
   local _asb_args=()
   while (($#)); do
     case "$1" in
-      --tool=*|--git-preset=*|--hostname=*|--port=*)
+      --tool=*|--git-preset=*|--hostname=*|--port=*|--runtime=*)
         _asb_args+=("${1%%=*}" "${1#*=}")
         ;;
       *)
@@ -279,6 +281,15 @@ parse_launcher_args() {
         (($# >= 2)) || { launcher_error "--git-preset requires a preset name (strict, daily, or relaxed)"; return; }
         CLI_GIT_PRESET="$2"
         shift 2
+        ;;
+      --runtime)
+        (($# >= 2)) || { launcher_error "--runtime requires docker or bwrap"; return; }
+        CLI_RUNTIME="$2"
+        shift 2
+        ;;
+      --read-home)
+        CLI_READ_HOME=true
+        shift
         ;;
       --tool)
         (($# >= 2)) || { launcher_error "--tool requires claude, codex or opencode"; return; }
@@ -364,6 +375,30 @@ resolve_git_preset() {
     selected="$cli_value"
   else
     selected="$(resolve SANDBOX_GIT_PRESET .git.policy.preset daily)"
+  fi
+  echo "$selected"
+}
+
+# Resolve the runtime backend name. CLI --runtime wins, else env > workspace >
+# user > default (docker). Validation against the supported set happens in main.
+resolve_runtime() {  # CLI_VALUE
+  local cli_value="$1" selected
+  if [[ -n "$cli_value" ]]; then
+    selected="$cli_value"
+  else
+    selected="$(resolve SANDBOX_RUNTIME .runtime docker)"
+  fi
+  echo "$selected"
+}
+
+# Resolve whether the whole real $HOME is readable under bwrap. CLI --read-home
+# wins, else env > workspace > user > default (false). Follows resolve_allow_local.
+resolve_read_home() {  # CLI_VALUE
+  local cli_value="$1" selected
+  if [[ -n "$cli_value" ]]; then
+    selected="$cli_value"
+  else
+    selected="$(resolve SANDBOX_BWRAP_READ_HOME .bwrap.read_home false)"
   fi
   echo "$selected"
 }
@@ -820,6 +855,35 @@ configure_auto_mounts() {
   return 0
 }
 
+# Render and run the selected agent in a one-shot Docker container.
+# Docker behavior is unchanged from the pre-seam launcher; the capture tests in
+# tests/launcher/test.sh are the regression lock.
+run_docker_agent() {
+  docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
+    --rm \
+    -e HOME="${SANDBOX_HOME}" \
+    "${PROXY_ENV_ARGS[@]}" \
+    "${HOST_SETTINGS_ENV_ARGS[@]}" \
+    "${HOST_SETTINGS_VOLUME_ARGS[@]}" \
+    "${TOOL_ENV_ARGS[@]}" \
+    "${GIT_ENV_ARGS[@]}" \
+    "${GIT_MODE_ENV_ARGS[@]}" \
+    "${GIT_VOLUME_ARGS[@]}" \
+    "${TOOL_VOLUME_ARGS[@]}" \
+    "${GIT_POLICY_VOLUME_ARGS[@]}" \
+    "${BROWSER_ENV_ARGS[@]}" \
+    "${BROWSER_VOLUME_ARGS[@]}" \
+    "${EXTRA_MOUNT_VOLUME_ARGS[@]}" \
+    -it ai-agent \
+    npx --yes "$TOOL_PACKAGE" "${TOOL_DEFAULT_ARGS[@]}" "${TOOL_USER_ARGS[@]}"
+}
+
+# Placeholder until the bwrap backend is implemented.
+run_bwrap_agent() {
+  launcher_error "the bwrap runtime backend is not implemented yet"
+  return 2
+}
+
 # --- Main execution (only runs when executed, not sourced) ---
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -905,6 +969,20 @@ SELECTED_TOOL="$CLI_RESOLVED_TOOL"
 configure_tool "$SELECTED_TOOL"
 if [[ -n "$SERVE_ACTION" ]]; then
   [[ "$SELECTED_TOOL" == opencode ]] || { launcher_error "serve currently supports only OpenCode"; exit 2; }
+fi
+
+# Runtime backend selection. CLI --runtime > env > config > default (docker).
+RUNTIME="$(resolve_runtime "$CLI_RUNTIME")"
+case "$RUNTIME" in
+  docker|bwrap) ;;
+  *) launcher_error "unsupported runtime '$RUNTIME'; supported runtimes: docker, bwrap"; exit 2 ;;
+esac
+READ_HOME="$(resolve_read_home "$CLI_READ_HOME")"
+if [[ "$RUNTIME" == docker && "$CLI_READ_HOME" == true ]]; then
+  warn_msg "--read-home has no effect with --runtime docker (it is ignored)."
+fi
+if [[ -n "$SERVE_ACTION" && "$RUNTIME" == bwrap ]]; then
+  launcher_error "serve is available only with --runtime docker in this release"; exit 2
 fi
 
 # Proxy environment passthrough applies to npx and every tool profile.
@@ -1133,7 +1211,7 @@ fi
 # Best-effort: a failed warm-up (e.g. offline) is ignored; the error surfaces
 # again in the interactive run exactly as it would have before. Skipped when
 # progress is disabled (SANDBOX_PROGRESS=false restores the legacy behavior).
-if [[ "$SANDBOX_PROGRESS" == "true" ]]; then
+if [[ "$RUNTIME" == docker && "$SANDBOX_PROGRESS" == "true" ]]; then
   progress_stop
   echo "ai-sandbox: Fetching tool package $TOOL_PACKAGE (first launch may download it)..." >&2
   warm_rc=0
@@ -1246,25 +1324,13 @@ if [[ "$SERVE_ACTION" == start ]]; then
   exit 0
 fi
 
-# Run the selected coding agent in a one-shot container.
-# Each invocation gets its own container; named volumes (ai-agent-home) persist across runs.
-docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
-  --rm \
-  -e HOME="${SANDBOX_HOME}" \
-  "${PROXY_ENV_ARGS[@]}" \
-  "${HOST_SETTINGS_ENV_ARGS[@]}" \
-  "${HOST_SETTINGS_VOLUME_ARGS[@]}" \
-  "${TOOL_ENV_ARGS[@]}" \
-  "${GIT_ENV_ARGS[@]}" \
-  "${GIT_MODE_ENV_ARGS[@]}" \
-  "${GIT_VOLUME_ARGS[@]}" \
-  "${TOOL_VOLUME_ARGS[@]}" \
-  "${GIT_POLICY_VOLUME_ARGS[@]}" \
-  "${BROWSER_ENV_ARGS[@]}" \
-  "${BROWSER_VOLUME_ARGS[@]}" \
-  "${EXTRA_MOUNT_VOLUME_ARGS[@]}" \
-  -it ai-agent \
-  npx --yes "$TOOL_PACKAGE" "${TOOL_DEFAULT_ARGS[@]}" "${TOOL_USER_ARGS[@]}"
+# Run the selected coding agent.
+#   docker: a one-shot container; the named ai-agent-home volume persists across runs.
+#   bwrap:  the host-installed tool in an unprivileged namespace sandbox.
+case "$RUNTIME" in
+  docker) run_docker_agent ;;
+  bwrap)  run_bwrap_agent ;;
+esac
 
 # Clean up empty stub directories that Docker created inside the ai-agent-home volume
 # as mount-point parents for WORKSPACE_DIR. This must run after the main container exits
@@ -1272,7 +1338,7 @@ docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml
 #
 # We walk upward from the parent of WORKSPACE_DIR toward SANDBOX_HOME, removing each
 # directory only if it is empty (rmdir fails silently otherwise, so real data is safe).
-if [[ "$SANDBOX_CLEANUP" == "true" && "$WORKSPACE_DIR" == "$SANDBOX_HOME"/* ]]; then
+if [[ "$RUNTIME" == docker && "$SANDBOX_CLEANUP" == "true" && "$WORKSPACE_DIR" == "$SANDBOX_HOME"/* ]]; then
   docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
     --rm \
     cleanup
