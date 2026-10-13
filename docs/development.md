@@ -66,7 +66,9 @@ Any change to behavior, the CLI, volumes, config/env knobs, or the install layou
 
 ## Commit granularity
 
-A commit should be a coherent, reviewable **unit of work** — a feature, its
+Landing a unit of work includes committing it: make these commits yourself as
+you go, without waiting for a manual instruction to commit. A commit should be a
+coherent, reviewable **unit of work** — a feature, its
 tests, its docs, a refactor — not a step of the process. How you split those
 units is a judgment call: one commit carrying the feature, its tests, and its
 docs is fine; so is a small set of separate commits (feature / tests / docs).
