@@ -14,7 +14,7 @@ _ai_sandbox() {
 
     case "$prev" in
         --tool)
-            if [[ "${COMP_WORDS[1]:-}" == serve ]]; then
+            if [[ "${COMP_WORDS[1]:-}" == serve || "${COMP_WORDS[1]:-}" == openchamber ]]; then
                 COMPREPLY=($(compgen -W "opencode" -- "$cur"))
             else
                 COMPREPLY=($(compgen -W "claude codex opencode" -- "$cur"))
@@ -33,11 +33,15 @@ _ai_sandbox() {
             COMPREPLY=($(compgen -W "start stop attach" -- "$cur"))
             return 0
             ;;
-        --hostname)
+        openchamber)
+            COMPREPLY=($(compgen -W "start stop" -- "$cur"))
+            return 0
+            ;;
+        --hostname|--ui-host)
             COMPREPLY=($(compgen -W "all lo" -- "$cur"))
             return 0
             ;;
-        --port)
+        --port|--ui-port)
             return 0
             ;;
     esac
@@ -51,13 +55,22 @@ _ai_sandbox() {
         return 0
     fi
 
+    if [[ "${COMP_WORDS[1]:-}" == openchamber ]]; then
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=($(compgen -W "--tool --git-preset --hostname --port --ui-port --ui-host --keep-server --allow-local-git" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -d -- "$cur"))
+        fi
+        return 0
+    fi
+
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "--help -h --version -V --tool --git-preset --allow-local-git --runtime --read-home --" -- "$cur"))
         return 0
     fi
 
     # The optional workspace argument: complete directories.
-    COMPREPLY=($(compgen -W "serve" -- "$cur") $(compgen -d -- "$cur"))
+    COMPREPLY=($(compgen -W "serve openchamber" -- "$cur") $(compgen -d -- "$cur"))
     return 0
 }
 

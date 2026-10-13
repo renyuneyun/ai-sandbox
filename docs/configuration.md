@@ -61,6 +61,12 @@ opencode:
   data_dir: ~/.local/share/opencode     # string, default: ~/.local/share/opencode
   cache_dir: ~/.cache/opencode          # string, default: ~/.cache/opencode
 
+openchamber:
+  bin: openchamber              # string,  default: openchamber (resolved on PATH)
+  ui_port: 3000                 # integer, default: unset - 3000 or a free port; an explicit occupied value is an error
+  ui_host: all                  # all|lo|ADDRESS, default: all (0.0.0.0)
+  data_dir: ~/.config/openchamber  # string, default: OpenChamber's own default (~/.config/openchamber)
+
 proxy:
   env_passthrough: true         # bool,    default: true
 
@@ -252,6 +258,28 @@ OpenCode splits its state across three host directories, and each is mounted (an
 - `~/.cache/opencode` - installed git plugins (e.g. the `superpowers` plugin npm-installed from a `git+https://...` spec) and other cache. Mounted read/write at `${SANDBOX_HOME}/.cache/opencode`; toggle with `opencode.cache_passthrough` / `OPENCODE_CACHE_PASSTHROUGH`; custom host path via `opencode.cache_dir` / `OPENCODE_CACHE_DIR`. Without this, a git plugin cannot load: the sandbox blocks the fresh `git clone` it would fall back to (the generated gitconfig rewrites `https://github.com/` to `https://prohibited/`).
 
 Because the data directory contains session history, mounting it means sessions started in the sandbox appear on the host (and vice versa). Disable both passthroughs for a clean slate and authenticate with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, which opencode reads from the environment.
+
+## OpenChamber UI
+
+`asb openchamber start|stop` starts the sandboxed OpenCode server (exactly as `serve start` does) together with the host-side OpenChamber web UI attached to it; `stop` stops both. The agent runs in the sandbox; only the UI runs on the host.
+
+```sh
+# Optional: set your own passwords (otherwise an insecure default is printed)
+export OPENCODE_PASSWORD=...          # the sandboxed server password (v2)
+export OPENCHAMBER_UI_PASSWORD=...    # the OpenChamber UI password
+asb openchamber start --tool opencode@2.0.18 ~/project
+asb openchamber stop --tool opencode@2.0.18 ~/project
+```
+
+- `openchamber.bin` / `SANDBOX_OPENCHAMBER_BIN` (default: `openchamber`) - the UI binary, resolved on `PATH` (an absolute path is accepted).
+- `openchamber.ui_port` / `SANDBOX_OPENCHAMBER_UI_PORT` (default: unset) - the UI port; also `--ui-port`. Unset, OpenChamber uses 3000 or the next free port and the launcher reports the actual port. Set explicitly, an occupied port is an error.
+- `openchamber.ui_host` / `SANDBOX_OPENCHAMBER_UI_HOST` (default: `all`, i.e. `0.0.0.0`) - the UI bind address; also `--ui-host <all|lo|ADDRESS>`. The UI uses the password below; `--ui-host lo` keeps it loopback-only.
+- `openchamber.data_dir` / `SANDBOX_OPENCHAMBER_DATA_DIR` (default: OpenChamber's own default, `~/.config/openchamber`) - the UI's data directory. Sharing the default means the sandboxed UI shares projects, model settings (including TypeSafe/classification and protection settings), and the session list with any other OpenChamber instance on the host; a separate directory gives per-instance isolation at the cost of re-configuring each.
+- **Passwords** - the server password is `OPENCODE_PASSWORD` (or `OPENCODE_SERVER_PASSWORD`) and the UI password is `OPENCHAMBER_UI_PASSWORD` (OpenChamber's own env var); there is no config key. When unset, `openchamber start` falls back to an insecure default (`opencode` for the server, `openchamber` for the UI), **prints it, and warns** - enough to try it out, but set your own for anything exposed. (`serve start` still requires a server password.)
+- The sandboxed server's bind uses `--port` / `--hostname` (and `serve`'s config), not the openchamber knobs.
+- `--keep-server` (openchamber stop only) stops the UI but leaves the sandboxed server running.
+
+OpenChamber requires OpenCode 2.0.20+, so use a v2 tool (`--tool opencode@2.x`). `stop` records and targets only the instance the launcher started (by port), so it never touches another OpenChamber sharing the data directory.
 
 ## Proxy environment passthrough
 

@@ -56,7 +56,7 @@ ai-sandbox --help         # full usage reference (options, aliases, examples)
 ai-sandbox --version
 ```
 
-Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `--git-preset <strict|daily|relaxed>` selects the git policy preset (default `daily`), `serve start|stop|attach` manages an OpenCode server (v1 or v2), `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
+Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `--git-preset <strict|daily|relaxed>` selects the git policy preset (default `daily`), `serve start|stop|attach` manages an OpenCode server (v1 or v2), `openchamber start|stop` runs that server together with the host-side OpenChamber web UI, `-h/--help` and `-V/--version` print the help/version, one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
 
 Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
@@ -95,6 +95,31 @@ Both network options are optional. `--port` defaults to `4096`, a stable port fo
 `start` waits for an authenticated health response (`GET /global/health` for v1, `GET /api/info` for v2) before reporting success. If the container exits or never becomes ready, it stays available for `docker logs <container-name>` inspection; run `asb serve stop` before trying again.
 
 The server password is read from the environment, never from stdin, and is forwarded to Docker by name so its value never appears in command arguments (Docker administrators can still inspect a container's environment). OpenCode v1 requires `OPENCODE_SERVER_PASSWORD` and takes an optional `OPENCODE_SERVER_USERNAME`; OpenCode v2 accepts either `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD` with the fixed username `opencode`. To connect a phone or browser to a v2 server, pair it: run `opencode pair` (pointed at the server with `--server <url>`) and open the printed one-time link. The all-interface default also listens on any other host IPv4 interface; restrict the port to trusted networks with a host firewall if needed. ZeroTier encrypts traffic between its peers.
+
+### OpenChamber UI on the host (`asb openchamber`)
+
+`asb openchamber start` starts the sandboxed OpenCode server (exactly as `asb serve start` does) and then starts the [OpenChamber](https://opencode.ai) web UI **on the host**, attached to that server. One command brings both up: the agent still runs in the sandbox, only the UI runs on the host. It is a convenient way to drive a sandboxed session from a desktop browser or a phone on the same network.
+
+```sh
+# Optional: set your own passwords (otherwise an insecure default is printed)
+export OPENCODE_PASSWORD=...              # sandboxed server password (v2)
+export OPENCHAMBER_UI_PASSWORD=...        # OpenChamber UI password
+asb openchamber start --tool opencode@2.0.18 ~/projects/my-app
+# -> ai-sandbox: OpenChamber UI started at http://127.0.0.1:3000
+asb openchamber stop --tool opencode@2.0.18 ~/projects/my-app   # stops the UI and the server
+```
+
+OpenChamber requires OpenCode 2.0.20+, so use a v2 tool (`--tool opencode@2.x`). Optional knobs:
+
+- **Binary** — runs `openchamber` from `PATH`; override with `openchamber.bin` / `SANDBOX_OPENCHAMBER_BIN`.
+- **UI port** — `--ui-port`. Default 3000, or the next free port when taken (OpenChamber reassigns it and the launcher reports and records the actual port). An explicitly requested port that is already occupied is an error.
+- **UI bind** — `--ui-host` (default `all`, i.e. `0.0.0.0`, reachable on LAN/ZeroTier); use `--ui-host lo` for loopback-only.
+- **Passwords** — the server password comes from `OPENCODE_PASSWORD` / `OPENCODE_SERVER_PASSWORD` and the UI password from `OPENCHAMBER_UI_PASSWORD`. If you don't set one, the launcher uses an insecure default (`opencode` for the server, `openchamber` for the UI), **prints it, and warns** — convenient for a quick try, but set your own for anything exposed.
+- **Server** — `--port` / `--hostname` select the sandboxed server's bind, exactly as for `serve start`.
+- **State** — uses the default `~/.config/openchamber` (override `openchamber.data_dir` / `SANDBOX_OPENCHAMBER_DATA_DIR`), so it shares projects, model settings, and the session list with any other OpenChamber instance on the host. `stop` targets only the instance this launcher started (by port), so it never touches another OpenChamber.
+- **`--keep-server`** — stop the UI but leave the sandboxed server running (e.g. to later use `asb serve attach`).
+
+Because OpenChamber runs on the host, its own features (the integrated terminal, Project Actions git/GitHub, worktrees, preview servers) execute on the host, not in the sandbox. The sandbox bounds what the **agent** can do; it does not bound OpenChamber's own host-side tooling.
 
 ## Runtimes
 
@@ -212,6 +237,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
 - [x] **More tools** - first-class Claude Code, Codex CLI, and OpenCode profiles
     - [x] **Codex version** - pin Codex CLI via `CODEX_VERSION` or `codex.version`
     - [x] **OpenCode version** - pin OpenCode via `OPENCODE_VERSION` or `opencode.version`
+    - [x] **OpenChamber UI** - `asb openchamber start|stop` starts the sandboxed OpenCode server plus the host-side OpenChamber web UI attached to it in one command; shares the host's `~/.config/openchamber` and requires `OPENCHAMBER_UI_PASSWORD` for a network-reachable bind
     - [ ] Additional built-in coding agents
 - [x] **Rename** - named `ai-sandbox`, with the short alias `asb` and per-tool entrypoints `asb-claude` / `asb-codex` / `asb-opencode` (symlinks; the launcher auto-detects the tool from the invoked name. An explicit `--tool` still wins)
 - [x] **More runtimes** - Docker (default) plus a host-integrated `bwrap` backend

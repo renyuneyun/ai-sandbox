@@ -80,6 +80,7 @@ ai-sandbox - run a coding agent (Claude Code, Codex, or OpenCode) inside a Docke
 USAGE:
   ai-sandbox [OPTIONS] [WORKSPACE] [-- TOOL_ARGS...]
   ai-sandbox serve <start|stop|attach> [OPTIONS] [WORKSPACE]
+  ai-sandbox openchamber <start|stop> [OPTIONS] [WORKSPACE]
 
 OPTIONS:
   --tool <claude|codex|opencode>  Which tool to run (default: claude). Append
@@ -101,6 +102,13 @@ OPTIONS:
   --hostname <ADDRESS|all|lo>      Server bind address (default: all / 0.0.0.0).
   --port <PORT>                     Server port (default: 4096).
   --headless                        API-only server (OpenCode v1 only; no-op for v2).
+  --ui-port <PORT>                  openchamber only: OpenChamber UI port. Default:
+                                   3000, or the next free port when taken. When
+                                   given explicitly, an occupied port is an error.
+  --ui-host <ADDRESS|all|lo>        openchamber only: UI bind address (default:
+                                   all / 0.0.0.0, reachable on LAN/ZeroTier).
+  --keep-server                     openchamber stop only: stop the UI but leave the
+                                   sandboxed OpenCode server running.
   -h, --help                       Show this help and exit.
   -V, --version                    Show the version and exit.
 
@@ -121,8 +129,19 @@ EXAMPLES:
   asb serve start ~/my-project
   asb serve attach ~/my-project
   asb serve stop ~/my-project
+  asb openchamber start ~/my-project
+  asb openchamber stop ~/my-project
   ai-sandbox ~/my-project -- --resume
   asb-codex -- --model gpt-5.4
+
+OPENCHAMBER:
+  'openchamber start' starts the sandboxed OpenCode server (as 'serve start'
+  does) and then starts the OpenChamber web UI ON THE HOST, attached to that
+  server. The agent runs in the sandbox; OpenChamber's own terminal/git features
+  run on the host. It requires the 'openchamber' binary on PATH and OpenCode v2
+  (2.0.20+). Passwords come from OPENCODE_PASSWORD / OPENCODE_SERVER_PASSWORD
+  (server) and OPENCHAMBER_UI_PASSWORD (UI); when unset, an insecure default is
+  used, printed, and warned about.
 
 CONFIGURATION:
   Per-project:   $WORKSPACE_DIR/.ai-sandbox.yaml
@@ -238,6 +257,10 @@ parse_launcher_args() {
   SERVE_HOSTNAME="0.0.0.0"
   SERVE_PORT="4096"
   SERVE_HEADLESS=false
+  OPENCHAMBER_ACTION=""
+  OPENCHAMBER_UI_PORT=""
+  OPENCHAMBER_UI_HOST=""
+  OPENCHAMBER_KEEP_SERVER=false
   WORKSPACE_ARG=""
   TOOL_USER_ARGS=()
 
@@ -249,7 +272,7 @@ parse_launcher_args() {
   local _asb_args=()
   while (($#)); do
     case "$1" in
-      --tool=*|--git-preset=*|--hostname=*|--port=*|--runtime=*)
+      --tool=*|--git-preset=*|--hostname=*|--port=*|--runtime=*|--ui-port=*|--ui-host=*)
         _asb_args+=("${1%%=*}" "${1#*=}")
         ;;
       *)
@@ -269,6 +292,15 @@ parse_launcher_args() {
       start|stop|attach) shift ;;
       *) launcher_error "serve requires start, stop or attach"; return ;;
     esac
+  elif [[ "${1:-}" == openchamber ]]; then
+    shift
+    OPENCHAMBER_ACTION="${1:-}"
+    case "$OPENCHAMBER_ACTION" in
+      start) SERVE_ACTION=start ;;
+      stop)  SERVE_ACTION=stop ;;
+      *) launcher_error "openchamber requires start or stop"; return ;;
+    esac
+    shift
   fi
 
   while (($#)); do
@@ -303,7 +335,7 @@ parse_launcher_args() {
         shift 2
         ;;
       --hostname)
-        [[ "$SERVE_ACTION" == start && $# -ge 2 && -n "$2" ]] || { launcher_error "--hostname requires a server address after serve start"; return; }
+        [[ "$SERVE_ACTION" == start && $# -ge 2 && -n "$2" ]] || { launcher_error "--hostname requires a server address after serve/openchamber start"; return; }
         case "$2" in
           all) SERVE_HOSTNAME="0.0.0.0" ;;
           lo) SERVE_HOSTNAME="127.0.0.1" ;;
@@ -313,13 +345,28 @@ parse_launcher_args() {
         shift 2
         ;;
       --port)
-        [[ "$SERVE_ACTION" == start && $# -ge 2 && "$2" =~ ^[0-9]+$ && $2 -ge 1 && $2 -le 65535 ]] || { launcher_error "--port requires a number from 1 to 65535 after serve start"; return; }
+        [[ "$SERVE_ACTION" == start && $# -ge 2 && "$2" =~ ^[0-9]+$ && $2 -ge 1 && $2 -le 65535 ]] || { launcher_error "--port requires a number from 1 to 65535 after serve/openchamber start"; return; }
         SERVE_PORT="$2"
         shift 2
         ;;
       --headless)
-        [[ "$SERVE_ACTION" == start ]] || { launcher_error "--headless is valid only for serve start"; return; }
+        [[ "$SERVE_ACTION" == start && -z "$OPENCHAMBER_ACTION" ]] || { launcher_error "--headless is valid only for serve start"; return; }
         SERVE_HEADLESS=true
+        shift
+        ;;
+      --ui-port)
+        [[ -n "$OPENCHAMBER_ACTION" && $# -ge 2 && "$2" =~ ^[0-9]+$ && $2 -ge 1 && $2 -le 65535 ]] || { launcher_error "--ui-port requires a number from 1 to 65535 for openchamber"; return; }
+        OPENCHAMBER_UI_PORT="$2"
+        shift 2
+        ;;
+      --ui-host)
+        [[ -n "$OPENCHAMBER_ACTION" && $# -ge 2 && -n "$2" ]] || { launcher_error "--ui-host requires an address after openchamber"; return; }
+        OPENCHAMBER_UI_HOST="$2"
+        shift 2
+        ;;
+      --keep-server)
+        [[ "$OPENCHAMBER_ACTION" == stop ]] || { launcher_error "--keep-server is valid only for openchamber stop"; return; }
+        OPENCHAMBER_KEEP_SERVER=true
         shift
         ;;
       -*)
@@ -407,6 +454,149 @@ resolve_read_home() {  # CLI_VALUE
     selected="$(resolve SANDBOX_BWRAP_READ_HOME .bwrap.read_home false)"
   fi
   echo "$selected"
+}
+
+# --- OpenChamber UI (host-side companion to a sandboxed OpenCode server) ---
+
+# Map an --ui-host / openchamber.ui_host value to a bind address. Accepts the
+# same shorthand as the server's --hostname (all / lo) plus any raw address.
+openchamber_ui_host() {  # VALUE
+  case "$1" in
+    ""|all) echo "0.0.0.0" ;;
+    lo)     echo "127.0.0.1" ;;
+    local)  launcher_error "--ui-host local is not supported; use lo for loopback"; return 1 ;;
+    *)      echo "$1" ;;
+  esac
+}
+
+# Insecure, well-known fallbacks used when the user supplies no password. They
+# are only a hint: the launcher prints them and warns, so a real password can be
+# set instead. OpenChamber requires OpenCode 2.0.20+, hence the v2 check below.
+OPENCHAMBER_DEFAULT_SERVER_PASSWORD="opencode"
+OPENCHAMBER_DEFAULT_UI_PASSWORD="openchamber"
+
+# Load the OpenChamber-specific configuration into OC_* globals. Precedence:
+# CLI flag > env var > workspace config > user config > default.
+openchamber_load_config() {
+  local host
+  if [[ -n "$OPENCHAMBER_UI_HOST" ]]; then
+    host="$OPENCHAMBER_UI_HOST"
+  else
+    host="$(resolve SANDBOX_OPENCHAMBER_UI_HOST .openchamber.ui_host all)"
+  fi
+  OC_UI_HOST="$(openchamber_ui_host "$host")" || return 1
+
+  if [[ -n "$OPENCHAMBER_UI_PORT" ]]; then
+    OC_UI_PORT="$OPENCHAMBER_UI_PORT"
+  else
+    # Empty means "let OpenChamber pick 3000 or a free port"; a value (from env
+    # or config) is explicit, so an occupied port is an error.
+    OC_UI_PORT="$(resolve SANDBOX_OPENCHAMBER_UI_PORT .openchamber.ui_port "")"
+  fi
+
+  OC_DATA_DIR="$(resolve SANDBOX_OPENCHAMBER_DATA_DIR .openchamber.data_dir "")"
+  OC_BIN="$(resolve SANDBOX_OPENCHAMBER_BIN .openchamber.bin openchamber)"
+
+  # Passwords: use the user's, or the insecure default we print and warn about.
+  if [[ -n "${OPENCODE_PASSWORD:-}" ]]; then
+    OC_SERVER_PASSWORD="$OPENCODE_PASSWORD"; OC_SERVER_PASSWORD_DEFAULT=false
+  elif [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+    OC_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD"; OC_SERVER_PASSWORD_DEFAULT=false
+  else
+    OC_SERVER_PASSWORD="$OPENCHAMBER_DEFAULT_SERVER_PASSWORD"; OC_SERVER_PASSWORD_DEFAULT=true
+  fi
+
+  if [[ -n "${OPENCHAMBER_UI_PASSWORD:-}" ]]; then
+    OC_UI_PASSWORD="$OPENCHAMBER_UI_PASSWORD"; OC_UI_PASSWORD_DEFAULT=false
+  else
+    OC_UI_PASSWORD="$OPENCHAMBER_DEFAULT_UI_PASSWORD"; OC_UI_PASSWORD_DEFAULT=true
+  fi
+}
+
+# Prerequisites that must fail before any container is touched, plus the
+# default-password hints. The binary must exist and the tool must be OpenCode v2
+# (OpenChamber requires 2.0.20+). A missing password is not fatal: it falls back
+# to a weak, printed default with a warning.
+openchamber_prepare_start() {
+  command -v "$OC_BIN" >/dev/null 2>&1 ||
+    { launcher_error "openchamber binary '$OC_BIN' not found; install it with 'npm install -g @openchamber/web', put it on PATH, or set openchamber.bin"; return 1; }
+  case "$TOOL_PACKAGE" in
+    @opencode/cli*) ;;
+    *) launcher_error "openchamber requires OpenCode 2.0.20+; use --tool opencode@2.x"; return 1 ;;
+  esac
+  if [[ "$OC_SERVER_PASSWORD_DEFAULT" == true ]]; then
+    # Forward the default by name through the shared serve path.
+    export OPENCODE_PASSWORD="$OC_SERVER_PASSWORD"
+    warn_msg "no OpenCode server password set; using the insecure default '$OC_SERVER_PASSWORD' (set OPENCODE_PASSWORD to choose your own)"
+  fi
+  if [[ "$OC_UI_PASSWORD_DEFAULT" == true ]]; then
+    warn_msg "no OpenChamber UI password set; using the insecure default '$OC_UI_PASSWORD' (set OPENCHAMBER_UI_PASSWORD to choose your own)"
+  fi
+}
+
+# Start the host-side OpenChamber UI attached to the sandboxed server, and record
+# its resolved port so 'openchamber stop' can target exactly this instance.
+openchamber_start_ui() {
+  local ui_port out rc=0
+  # 'serve' is the default command, but naming it is explicit and future-proof.
+  # --quiet prints just the resolved port on stdout (the parseable contract).
+  local -a args=(serve --host "$OC_UI_HOST" --quiet)
+  [[ -n "$OC_UI_PORT" ]] && args=(serve --port "$OC_UI_PORT" --host "$OC_UI_HOST" --quiet)
+
+  # Passwords are exported to the child, never passed as arguments.
+  out="$(
+    export OPENCODE_HOST="http://127.0.0.1:${SERVE_PORT}"
+    export OPENCODE_SKIP_START=true
+    export OPENCODE_PASSWORD="$OC_SERVER_PASSWORD"
+    export OPENCHAMBER_UI_PASSWORD="$OC_UI_PASSWORD"
+    [[ -n "$OC_DATA_DIR" ]] && export OPENCHAMBER_DATA_DIR="$OC_DATA_DIR"
+    exec "$OC_BIN" "${args[@]}"
+  )" || rc=$?
+  if (( rc != 0 )); then
+    launcher_error "OpenChamber failed to start (exit $rc); the OpenCode server is still running at http://127.0.0.1:${SERVE_PORT} (stop it with 'asb serve stop')"
+    return 1
+  fi
+
+  # Stable output contract: 'openchamber --quiet' prints the resolved port, or
+  # '<port> pass:<password>' when it generated one.
+  ui_port="$(printf '%s\n' "$out" | head -1 | awk '{print $1}')"
+  [[ "$ui_port" =~ ^[0-9]+$ ]] ||
+    { launcher_error "could not determine the OpenChamber UI port from: $out"; return 1; }
+
+  if [[ -n "$SERVE_STATE_DIR" ]]; then
+    printf '%s\n' "$ui_port" > "$SERVE_STATE_DIR/openchamber.port"
+  fi
+
+  local shown_host="$OC_UI_HOST"
+  [[ "$shown_host" == "0.0.0.0" ]] && shown_host="127.0.0.1"
+  echo "ai-sandbox: OpenChamber UI started at http://$shown_host:$ui_port"
+  if [[ "$shown_host" != "$OC_UI_HOST" ]]; then
+    echo "ai-sandbox: also reachable on the host's LAN and ZeroTier IPv4 addresses"
+  fi
+}
+
+# Stop the recorded OpenChamber UI instance. It targets one port, so a shared
+# data dir with another OpenChamber instance is left untouched.
+openchamber_stop_ui() {
+  local ui_port="$OC_UI_PORT"
+  if [[ -z "$ui_port" && -n "$SERVE_STATE_DIR" && -f "$SERVE_STATE_DIR/openchamber.port" ]]; then
+    ui_port="$(cat "$SERVE_STATE_DIR/openchamber.port")"
+  fi
+  if [[ -z "$ui_port" ]]; then
+    warn_msg "no OpenChamber UI instance is recorded for $WORKSPACE_DIR"
+    return 0
+  fi
+  if command -v "$OC_BIN" >/dev/null 2>&1; then
+    # Pass the same data dir the instance was started with, so a non-default
+    # openchamber.data_dir can still be located.
+    if [[ -n "$OC_DATA_DIR" ]]; then
+      OPENCHAMBER_DATA_DIR="$OC_DATA_DIR" "$OC_BIN" stop --port "$ui_port" >/dev/null 2>&1 || true
+    else
+      "$OC_BIN" stop --port "$ui_port" >/dev/null 2>&1 || true
+    fi
+  fi
+  [[ -n "$SERVE_STATE_DIR" ]] && rm -f "$SERVE_STATE_DIR/openchamber.port"
+  echo "ai-sandbox: stopped OpenChamber UI (port $ui_port)"
 }
 
 detect_host_version() {
@@ -1277,7 +1467,7 @@ resolve_tool "$CLI_TOOL" >/dev/null
 SELECTED_TOOL="$CLI_RESOLVED_TOOL"
 configure_tool "$SELECTED_TOOL"
 if [[ -n "$SERVE_ACTION" ]]; then
-  [[ "$SELECTED_TOOL" == opencode ]] || { launcher_error "serve currently supports only OpenCode"; exit 2; }
+  [[ "$SELECTED_TOOL" == opencode ]] || { launcher_error "serve and openchamber support only OpenCode"; exit 2; }
 fi
 
 # Runtime backend selection. CLI --runtime > env > config > default (docker).
@@ -1291,7 +1481,7 @@ if [[ "$RUNTIME" == docker && "$CLI_READ_HOME" == true ]]; then
   warn_msg "--read-home has no effect with --runtime docker (it is ignored)."
 fi
 if [[ -n "$SERVE_ACTION" && "$RUNTIME" == bwrap ]]; then
-  launcher_error "serve is available only with --runtime docker in this release"; exit 2
+  launcher_error "serve and openchamber are available only with --runtime docker in this release"; exit 2
 fi
 
 # Proxy environment passthrough applies to npx and every tool profile.
@@ -1348,6 +1538,14 @@ fi
 # Stop and attach use the existing container. They need neither a fresh
 # sandbox nor generated policy files, and work after the original shell exits.
 if [[ "$SERVE_ACTION" == stop ]]; then
+  if [[ -n "$OPENCHAMBER_ACTION" ]]; then
+    openchamber_load_config || exit 2
+    openchamber_stop_ui
+    if [[ "$OPENCHAMBER_KEEP_SERVER" == true ]]; then
+      echo "ai-sandbox: OpenCode server left running for $WORKSPACE_DIR"
+      exit 0
+    fi
+  fi
   docker container inspect "$SERVE_NAME" >/dev/null 2>&1 || { launcher_error "server is not running for $WORKSPACE_DIR"; exit 2; }
   docker stop "$SERVE_NAME" >/dev/null 2>&1 || true
   docker rm "$SERVE_NAME" >/dev/null
@@ -1376,6 +1574,10 @@ if [[ "$SERVE_ACTION" == attach ]]; then
 fi
 
 if [[ "$SERVE_ACTION" == start ]]; then
+  if [[ -n "$OPENCHAMBER_ACTION" ]]; then
+    openchamber_load_config || exit 2
+    openchamber_prepare_start || exit 2
+  fi
   case "$TOOL_PACKAGE" in
     opencode-ai*)
       [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]] ||
@@ -1387,8 +1589,23 @@ if [[ "$SERVE_ACTION" == start ]]; then
       ;;
   esac
   if docker container inspect "$SERVE_NAME" >/dev/null 2>&1; then
-    launcher_error "server already exists for $WORKSPACE_DIR; use 'asb serve stop' first"
-    exit 2
+    if [[ "$OPENCHAMBER_ACTION" == start ]]; then
+      # Reuse a running server instead of refusing; a stopped one is an error so
+      # a wedged container is dealt with explicitly.
+      if [[ "$(docker inspect -f '{{.State.Running}}' "$SERVE_NAME" 2>/dev/null)" == true ]]; then
+        SERVE_REUSE=true
+        SERVE_STARTED=true
+        SERVE_PORT="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.port" }}' "$SERVE_NAME")"
+        SERVE_HOSTNAME="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.hostname" }}' "$SERVE_NAME")"
+        SERVE_PACKAGE="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.package" }}' "$SERVE_NAME")"
+      else
+        launcher_error "a stopped OpenCode server exists for $WORKSPACE_DIR; run 'asb serve stop' first"
+        exit 2
+      fi
+    else
+      launcher_error "server already exists for $WORKSPACE_DIR; use 'asb serve stop' first"
+      exit 2
+    fi
   fi
   mkdir -p -m 700 "$SERVE_STATE_DIR"
 fi
@@ -1435,7 +1652,7 @@ SANDBOX_GIT_ALLOW_LOCAL_OPERATIONS="$(resolve_allow_local "$CLI_ALLOW_LOCAL_GIT"
 SANDBOX_GIT_PRESET="$(resolve_git_preset "$CLI_GIT_PRESET")"
 
 GIT_POLICY_VOLUME_ARGS=()
-if [[ -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ]]; then
+if [[ "${SERVE_REUSE:-false}" != true && ( -n "$SANDBOX_GIT_POLICY_ALLOW" || -n "$SANDBOX_GIT_POLICY_BLOCK" ) ]]; then
     if [[ "$SERVE_ACTION" == start ]]; then
         POLICY_FILE="$(mktemp "$SERVE_STATE_DIR/policy.XXXXXX")"
     else
@@ -1546,6 +1763,7 @@ if [[ "$RUNTIME" == docker && "$SANDBOX_PROGRESS" == "true" ]]; then
 fi
 
 if [[ "$SERVE_ACTION" == start ]]; then
+  if [[ "${SERVE_REUSE:-false}" != true ]]; then
   case "$TOOL_PACKAGE" in
     opencode-ai*)
       SERVER_ENV_ARGS=(-e OPENCODE_SERVER_PASSWORD)
@@ -1616,11 +1834,16 @@ if [[ "$SERVE_ACTION" == start ]]; then
     launcher_error "OpenCode server did not become ready; inspect 'docker logs $SERVE_NAME', then use 'asb serve stop'"
     exit 2
   fi
+  fi
   if [[ "$SERVE_HOSTNAME" == "0.0.0.0" ]]; then
     echo "ai-sandbox: OpenCode server started at http://127.0.0.1:$SERVE_PORT"
     echo "ai-sandbox: also reachable on the host's LAN and ZeroTier IPv4 addresses"
   else
     echo "ai-sandbox: OpenCode server started at http://$SERVE_HOSTNAME:$SERVE_PORT"
+  fi
+  if [[ "$OPENCHAMBER_ACTION" == start ]]; then
+    openchamber_start_ui || exit 2
+    exit 0
   fi
   case "$TOOL_PACKAGE" in
     opencode-ai*)

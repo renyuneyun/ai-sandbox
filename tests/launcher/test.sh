@@ -1648,6 +1648,27 @@ if [[ -s "$COMPLETION_FILE" ]]; then
         [[ "$COMPLETION_JOINED" == *"--runtime"* && "$COMPLETION_JOINED" == *"--read-home"* ]] &&
           ok "completion: runtime options included" ||
           bad "completion: runtime options included ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" "openchamber" ""); COMP_CWORD=2
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *start* && "$COMPLETION_JOINED" == *stop* ]] &&
+          ok "completion: openchamber completes start/stop" ||
+          bad "completion: openchamber completes start/stop ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" "openchamber" "start" "--ui-"); COMP_CWORD=3
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *"--ui-port"* && "$COMPLETION_JOINED" == *"--ui-host"* ]] &&
+          ok "completion: openchamber UI options included" ||
+          bad "completion: openchamber UI options included ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" ""); COMP_CWORD=1
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *openchamber* ]] &&
+          ok "completion: openchamber is offered as a subcommand" ||
+          bad "completion: openchamber is offered as a subcommand ($COMPLETION_JOINED)"
     else
         bad "completion: _ai_sandbox function exists"
     fi

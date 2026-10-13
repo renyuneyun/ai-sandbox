@@ -16,6 +16,20 @@ _ai-sandbox() {
             '*:workspace:_files -/'
         return
     fi
+    if [[ "${words[2]:-}" == openchamber ]]; then
+        _arguments -s -S \
+            '2:action:(start stop)' \
+            '--tool=[Select the tool]:tool:(opencode)' \
+            '--git-preset=[Git policy preset]:preset:(strict daily relaxed)' \
+            '--hostname=[Server listen address]:address:(all lo)' \
+            '--port=[Server port]:port:' \
+            '--ui-port=[OpenChamber UI port]:port:' \
+            '--ui-host=[OpenChamber UI listen address]:address:(all lo)' \
+            '--keep-server[Stop the UI but leave the server running (openchamber stop)]' \
+            '--allow-local-git[Block only git push]' \
+            '*:workspace:_files -/'
+        return
+    fi
     local -a opts
     opts=(
         '(-h --help)'{-h,--help}'[Show help]'
@@ -30,7 +44,7 @@ _ai-sandbox() {
         '1:workspace:_files -/' \
         '*::tool arg:'
     if (( CURRENT == 2 )); then
-        compadd serve
+        compadd serve openchamber
     fi
 }
 

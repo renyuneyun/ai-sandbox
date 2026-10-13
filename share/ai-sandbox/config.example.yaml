@@ -102,6 +102,38 @@ opencode:
   # data_dir: /path/to/custom/.local/share/opencode
   # cache_dir: /path/to/custom/.cache/opencode
 
+openchamber:
+  # Settings for 'asb openchamber start|stop', which starts the sandboxed
+  # OpenCode server together with the host-side OpenChamber web UI attached
+  # to it. The agent runs in the sandbox; only the UI runs on the host.
+  # OpenChamber requires OpenCode 2.0.20+, so use --tool opencode@2.x.
+  # The server password (OPENCODE_PASSWORD or OPENCODE_SERVER_PASSWORD) is
+  # forwarded to the UI as OPENCODE_PASSWORD. When a password is not set, an
+  # insecure default is used, printed, and warned about (server: opencode,
+  # UI: openchamber); set OPENCODE_PASSWORD / OPENCHAMBER_UI_PASSWORD to
+  # override.
+
+  # The OpenChamber binary, resolved on PATH (an absolute path is accepted).
+  # Default: openchamber. Env: SANDBOX_OPENCHAMBER_BIN.
+  # bin: openchamber
+
+  # UI port. Unset, OpenChamber uses 3000 or the next free port and the
+  # launcher reports the actual port. When set (or via --ui-port), an
+  # occupied port is an error. Default: unset. Env: SANDBOX_OPENCHAMBER_UI_PORT.
+  # ui_port: 3000
+
+  # UI bind address: all (0.0.0.0), lo (127.0.0.1) or a specific address.
+  # A network-reachable bind requires OPENCHAMBER_UI_PASSWORD. Default: all.
+  # Env: SANDBOX_OPENCHAMBER_UI_HOST.
+  # ui_host: all
+
+  # OpenChamber data directory. Default (unset): OpenChamber's own default
+  # (~/.config/openchamber), so the sandboxed UI shares projects, model
+  # settings and the session list with any other OpenChamber instance on the
+  # host. Set a different path for per-instance isolation. Env:
+  # SANDBOX_OPENCHAMBER_DATA_DIR.
+  # data_dir: ~/.config/openchamber
+
 proxy:
   # Forward non-empty HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and
   # their lowercase equivalents from the host into the sandbox. This
