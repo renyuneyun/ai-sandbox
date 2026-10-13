@@ -189,6 +189,17 @@ if parse_launcher_args --git-preset >/dev/null 2>&1; then bad "parse: missing gi
 if parse_launcher_args --bogus >/dev/null 2>&1; then bad "parse: unsupported option"; else ok "parse: unsupported option"; fi
 if parse_launcher_args one two >/dev/null 2>&1; then bad "parse: multiple workspaces"; else ok "parse: multiple workspaces"; fi
 
+# --mount collects extra-mount specs (repeatable, token and "=" forms).
+parse_launcher_args --mount '~/.cache/opencode:rw' --mount '/opt/shared'
+assert_eq "parse: --mount collects specs" "2" "${#CLI_MOUNTS[@]}"
+assert_eq "parse: --mount first spec" "~/.cache/opencode:rw" "${CLI_MOUNTS[0]}"
+assert_eq "parse: --mount second spec" "/opt/shared" "${CLI_MOUNTS[1]}"
+parse_launcher_args --mount=~/.config/cc-switch
+assert_eq "parse: --mount equals form" "~/.config/cc-switch" "${CLI_MOUNTS[0]}"
+parse_launcher_args
+assert_eq "parse: no --mount leaves CLI_MOUNTS empty" "0" "${#CLI_MOUNTS[@]}"
+if parse_launcher_args --mount >/dev/null 2>&1; then bad "parse: missing --mount value"; else ok "parse: missing --mount value"; fi
+
 WORKSPACE_CONFIG_VALID=false
 USER_CONFIG_VALID=false
 unset SANDBOX_TOOL
@@ -788,6 +799,52 @@ assert_eq "extra: whitespace trimmed third" "/host/alice/.cache/npm:/host/alice/
 # A single trailing-token "host:ro" is treated as a flag, container == host
 assert_eq "extra: host:flag keeps same path" "/host/alice/.cache/npm:/host/alice/.cache/npm:ro" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
 
+# --- CLI --mount (configure_cli_mounts) tests ---
+# CLI entries reuse the exact mounts.extra grammar and ro/rw default.
+HOME="/host/alice"
+SANDBOX_EXTRA_MOUNTS_ENABLED=true
+EXTRA_MOUNT_VOLUME_ARGS=()
+CLI_MOUNTS=('~/.cache/opencode:rw' '~/.config/cc-switch')
+configure_cli_mounts
+assert_eq "cli mount: two specs produce two -v pairs" "4" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+assert_eq "cli mount: rw opt-in" "/host/alice/.cache/opencode:/host/alice/.cache/opencode:rw" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "cli mount: ro default at same path" "/host/alice/.config/cc-switch:/host/alice/.config/cc-switch:ro" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
+
+# An explicit container path is honored like a config spec.
+EXTRA_MOUNT_VOLUME_ARGS=()
+CLI_MOUNTS=('~/.cache/npm:/home/user/.cache/npm:rw')
+configure_cli_mounts
+assert_eq "cli mount: explicit container path" "/host/alice/.cache/npm:/home/user/.cache/npm:rw" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+
+# CLI entries append after config entries, so they win on same-path overlap.
+SANDBOX_EXTRA_MOUNTS="~/.cache/opencode"
+CLI_MOUNTS=('~/.cache/opencode:rw')
+configure_extra_mounts
+configure_cli_mounts
+assert_eq "cli mount: appends after config" "4" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+assert_eq "cli mount: config entry ro first" "/host/alice/.cache/opencode:/host/alice/.cache/opencode:ro" "${EXTRA_MOUNT_VOLUME_ARGS[1]}"
+assert_eq "cli mount: cli rw entry last (wins)" "/host/alice/.cache/opencode:/host/alice/.cache/opencode:rw" "${EXTRA_MOUNT_VOLUME_ARGS[3]}"
+
+# The mounts master switch gates --mount too, with a visible warning.
+SANDBOX_EXTRA_MOUNTS=""
+EXTRA_MOUNT_VOLUME_ARGS=()
+CLI_MOUNTS=('~/.cache/opencode:rw')
+SANDBOX_EXTRA_MOUNTS_ENABLED=false
+CLI_MOUNT_WARN="$(configure_cli_mounts 2>&1 >/dev/null)"
+assert_eq "cli mount: disabled emits nothing" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+[[ "$CLI_MOUNT_WARN" == *"--mount"* ]] &&
+  ok "cli mount: disabled warns about --mount" ||
+  bad "cli mount: disabled warns about --mount ($CLI_MOUNT_WARN)"
+
+# No CLI mounts is a no-op (and does not warn).
+SANDBOX_EXTRA_MOUNTS_ENABLED=true
+EXTRA_MOUNT_VOLUME_ARGS=()
+CLI_MOUNTS=()
+CLI_MOUNT_WARN="$(configure_cli_mounts 2>&1 >/dev/null)"
+assert_eq "cli mount: empty is a no-op" "0" "${#EXTRA_MOUNT_VOLUME_ARGS[@]}"
+assert_eq "cli mount: empty does not warn" "" "$CLI_MOUNT_WARN"
+
+unset CLI_MOUNTS
 reset_extra_mounts
 unset HOME
 
@@ -801,6 +858,15 @@ CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
 [[ "$CAPTURED_JOINED" == *"<-v><$CAPTURE_DIR_EXTRA/home/.config/cc-switch:/home/tester/.config/cc-switch:ro>"* ]] &&
   ok "extra: mount reaches docker compose run" ||
   bad "extra: mount reaches docker compose run ($CAPTURED_JOINED)"
+
+# CLI --mount specs reach docker compose run with the same -v rendering.
+CAPTURE_DIR_CLIMOUNT="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$CAPTURE_DIR_CLIMOUNT")
+run_captured_launcher "$CAPTURE_DIR_CLIMOUNT" --mount '~/.cache/opencode:rw' "$SCRIPT_DIR/../.."
+CAPTURED_JOINED="$(printf '<%s>' "${CAPTURED_DOCKER_ARGS[@]}")"
+[[ "$CAPTURED_JOINED" == *"<-v><$CAPTURE_DIR_CLIMOUNT/home/.cache/opencode:$CAPTURE_DIR_CLIMOUNT/home/.cache/opencode:rw>"* ]] &&
+  ok "cli mount: --mount reaches docker compose run" ||
+  bad "cli mount: --mount reaches docker compose run ($CAPTURED_JOINED)"
 
 # --- Auto-detect mount tests (git worktree / symlinks) ---
 reset_auto_mounts() {
@@ -1447,6 +1513,18 @@ assert_eq "bwrap mounts: rewritten cont path" "<--bind></host/tester/.claude></h
 assert_eq "bwrap rewrite: exact home" "/host/tester" "$(bwrap_rewrite_cont_path /home/tester)"
 assert_eq "bwrap rewrite: under home" "/host/tester/.codex" "$(bwrap_rewrite_cont_path /home/tester/.codex)"
 assert_eq "bwrap rewrite: unrelated path" "/etc/hosts" "$(bwrap_rewrite_cont_path /etc/hosts)"
+
+# A CLI --mount spec renders to a bwrap bind like a config entry.
+CLI_MOUNTS=('/host/tester/.cache/opencode:rw')
+SANDBOX_EXTRA_MOUNTS_ENABLED=true
+EXTRA_MOUNT_VOLUME_ARGS=()
+configure_cli_mounts
+bwrap_translate_mounts "${EXTRA_MOUNT_VOLUME_ARGS[@]}"
+JOINED="$(printf '<%s>' "${BWRAP_MOUNT_ARGS[@]}")"
+[[ "$JOINED" == *"<--bind></host/tester/.cache/opencode></host/tester/.cache/opencode>"* ]] &&
+  ok "cli mount: --mount renders an rw bwrap bind" ||
+  bad "cli mount: --mount renders an rw bwrap bind ($JOINED)"
+unset CLI_MOUNTS
 unset SANDBOX_HOME BWRAP_HOME
 
 # bwrap env translation: -e K=V -> --setenv K V, preserving '=' in values.
@@ -1671,6 +1749,9 @@ if [[ -s "$COMPLETION_FILE" ]]; then
         [[ "$COMPLETION_JOINED" == *"--runtime"* && "$COMPLETION_JOINED" == *"--read-home"* ]] &&
           ok "completion: runtime options included" ||
           bad "completion: runtime options included ($COMPLETION_JOINED)"
+        [[ "$COMPLETION_JOINED" == *"--mount"* ]] &&
+          ok "completion: --mount included in flag completion" ||
+          bad "completion: --mount included in flag completion ($COMPLETION_JOINED)"
 
         COMP_WORDS=("ai-sandbox" "openchamber" ""); COMP_CWORD=2
         _ai_sandbox

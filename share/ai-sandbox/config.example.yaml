@@ -158,6 +158,7 @@ mounts:
   #   - A leading "~" / "~/" in either path expands to the host $HOME.
   #
   # Env override: SANDBOX_EXTRA_MOUNTS (newline-separated specs).
+  # CLI equivalent: a repeatable --mount SPEC flag (same grammar).
   # When enabled: false, ALL mounts (manual extra + auto-detected) are ignored.
   # Default: true.
   # enabled: true

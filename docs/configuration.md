@@ -331,6 +331,14 @@ SANDBOX_EXTRA_MOUNTS=$'~/.config/cc-switch\n~/.cache/npm:/home/user/.cache/npm:r
 
 `mounts.enabled: false` (or `SANDBOX_EXTRA_MOUNTS_ENABLED=false`) is the master switch: it ignores **all** extra and auto mounts.
 
+The CLI equivalent is a repeatable `--mount SPEC` flag with the same grammar, handy for a one-off directory without editing config:
+
+```sh
+ai-sandbox --mount ~/.config/cc-switch --mount ~/.cache/npm:rw ~/my-project
+```
+
+`--mount` specs are appended after the config/env list, so a CLI spec wins on same-path overlap, and they honor the same `mounts.enabled` master switch: when mounts are disabled a `--mount` is ignored with a warning rather than silently dropped.
+
 **Notes:**
 - Extra mounts are read-only by default. This differs from the tool-config passthroughs (`.claude`, `.codex`, ...), which mount read/write by default — those are trusted, well-known paths, whereas extra mounts are arbitrary and opt-in.
 - The host path must already exist; Docker does not create empty stub dirs for bind mounts passed via `-v` to `docker compose run`, so a missing host path makes the invocation fail loudly rather than silently creating a host directory.

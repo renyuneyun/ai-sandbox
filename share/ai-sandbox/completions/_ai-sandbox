@@ -13,6 +13,7 @@ _ai-sandbox() {
             '--hostname=[Server listen address]:address:(all lo)' \
             '--port=[Server port]:port:' \
             '--headless[API-only server (v1 only; no-op for v2)]' \
+            '--mount=[Extra host path mount (HOST[:CONTAINER[:FLAGS]])]:spec:' \
             '--allow-local-git[Block only git push]' \
             '*:workspace:_files -/'
         return
@@ -28,6 +29,7 @@ _ai-sandbox() {
             '--ui-port=[OpenChamber UI port]:port:' \
             '--ui-host=[OpenChamber UI listen address]:address:(all lo)' \
             '--keep-server[Stop the UI but leave the server running (openchamber stop)]' \
+            '--mount=[Extra host path mount (HOST[:CONTAINER[:FLAGS]])]:spec:' \
             '--allow-local-git[Block only git push]' \
             '*:workspace:_files -/'
         return
@@ -40,6 +42,7 @@ _ai-sandbox() {
         '--git-preset=[Git policy preset]:preset:(strict daily relaxed)'
         '--runtime=[Sandbox backend]:backend:(docker bwrap)'
         '--read-home[Make the whole real home readable (bwrap only)]'
+        '--mount=[Extra host path mount (HOST[:CONTAINER[:FLAGS]])]:spec:'
         '--allow-local-git[Block only git push; allow other local git operations]'
     )
     _arguments -s -S $opts \

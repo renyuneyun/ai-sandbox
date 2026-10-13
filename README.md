@@ -56,7 +56,7 @@ ai-sandbox --help         # full usage reference (options, aliases, examples)
 ai-sandbox --version
 ```
 
-Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `--git-preset <strict|daily|relaxed>` selects the git policy preset (default `daily`), `serve start|stop|attach` manages an OpenCode server (v1 or v2), `openchamber start|stop` runs that server together with the host-side OpenChamber web UI, `-h/--help` and `-V/--version` print the help/version (also accepted after `serve`/`openchamber` and their action, e.g. `asb openchamber start --help`), one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
+Run `ai-sandbox --help` for the full option reference. In short: `--tool <claude|codex|opencode>` selects the tool (with an optional `@version` pin), `--allow-local-git` enables the git local-override mode, `--git-preset <strict|daily|relaxed>` selects the git policy preset (default `daily`), `--mount <HOST[:CONTAINER[:FLAGS]]>` adds extra host paths to the sandbox (repeatable; `:rw` to allow writes), `serve start|stop|attach` manages an OpenCode server (v1 or v2), `openchamber start|stop` runs that server together with the host-side OpenChamber web UI, `-h/--help` and `-V/--version` print the help/version (also accepted after `serve`/`openchamber` and their action, e.g. `asb openchamber start --help`), one optional `WORKSPACE` directory may be given, and everything after `--` is passed unchanged to the selected tool in normal interactive mode.
 
 Claude is the default. Tool selection precedence is CLI `--tool` (or the invoked `asb-claude`/`asb-codex`/`asb-opencode` name) > `SANDBOX_TOOL` > workspace `tool` > user `tool` > Claude. Supported tools: `claude`, `codex`, `opencode`. Arguments after `--` are passed unchanged to the selected tool.
 
@@ -212,7 +212,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
     - [x] **Proxy environment passthrough** - standard uppercase and lowercase proxy variables are forwarded by default, with a global or per-workspace opt-out
     - [x] **Automatic cleanup** - the container is removed on exit
     - [x] **Additional mountpoints** - Additional paths to mount into the container
-        - [x] Manual list (`mounts.extra`; read-only by default, e.g. CC Switch's own settings directory)
+        - [x] Manual list (`mounts.extra`, or a repeatable `--mount SPEC` on the CLI; read-only by default, `:rw` to allow writes, e.g. CC Switch's own settings directory)
         - [x] Automatic-sensing for known cases: linked git worktree / submodule git-dir and its common git dir (objects/refs) (`mounts.auto.git_worktree`) and config-dir or workspace symlinks that point outside their mounted roots (`mounts.auto.symlinks`)
         - [ ] General intelligent-sensing beyond those cases
     - [ ] **Safe passthrough** - safely passthrough files and folders between host and sandbox, such as package caches
@@ -233,7 +233,7 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
     - [x] **Claude version** - pin Claude Code version via `claude.version`
     - [x] **Claude config passthrough** - toggle `~/.claude` mount via `claude.config_passthrough`
     - [x] **Cleanup** - toggle cleanup container via `sandbox.cleanup`
-    - [x] **Additional paths** - mount arbitrary host paths via `mounts.extra` and auto-detect a linked worktree's git-dir + common git dir and out-of-tree config/workspace symlinks via `mounts.auto`
+    - [x] **Additional paths** - mount arbitrary host paths via `mounts.extra` (or a repeatable `--mount SPEC` flag) and auto-detect a linked worktree's git-dir + common git dir and out-of-tree config/workspace symlinks via `mounts.auto`
 - [x] **Alternative Claude config and env** - use dedicated Claude config paths, disable config passthrough, or authenticate with `ANTHROPIC_API_KEY`
 - [ ] **Network isolation** - container has its own network, isolated from the host
 - [x] **More tools** - first-class Claude Code, Codex CLI, and OpenCode profiles

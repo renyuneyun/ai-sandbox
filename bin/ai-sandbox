@@ -99,6 +99,11 @@ OPTIONS:
   --read-home                      bwrap only: make the whole real home
                                    readable (writes still go to a per-workspace
                                    layer). Default: off.
+  --mount <HOST[:CONTAINER[:FLAGS]]>
+                                   Extra host path to make available in the
+                                   sandbox (repeatable). FLAGS defaults to ro;
+                                   use :rw to allow writes. Same grammar as
+                                   mounts.extra in the config.
   --hostname <ADDRESS|all|lo>      Server bind address (default: all / 0.0.0.0).
   --port <PORT>                     Server port (default: 4096).
   --headless                        API-only server (OpenCode v1 only; no-op for v2).
@@ -131,6 +136,7 @@ EXAMPLES:
   asb serve stop ~/my-project
   asb openchamber start ~/my-project
   asb openchamber stop ~/my-project
+  asb --mount ~/.cache/opencode:rw ~/my-project
   ai-sandbox ~/my-project -- --resume
   asb-codex -- --model gpt-5.4
 
@@ -254,6 +260,7 @@ parse_launcher_args() {
   CLI_RUNTIME=""
   CLI_READ_HOME=""
   CLI_HELP=false
+  CLI_MOUNTS=()
   SERVE_ACTION=""
   SERVE_HOSTNAME="0.0.0.0"
   SERVE_PORT="4096"
@@ -273,7 +280,7 @@ parse_launcher_args() {
   local _asb_args=()
   while (($#)); do
     case "$1" in
-      --tool=*|--git-preset=*|--hostname=*|--port=*|--runtime=*|--ui-port=*|--ui-host=*)
+      --tool=*|--git-preset=*|--hostname=*|--port=*|--runtime=*|--ui-port=*|--ui-host=*|--mount=*)
         _asb_args+=("${1%%=*}" "${1#*=}")
         ;;
       *)
@@ -339,6 +346,11 @@ parse_launcher_args() {
       --read-home)
         CLI_READ_HOME=true
         shift
+        ;;
+      --mount)
+        (($# >= 2)) || { launcher_error "--mount requires HOST[:CONTAINER[:FLAGS]]"; return; }
+        CLI_MOUNTS+=("$2")
+        shift 2
         ;;
       --tool)
         (($# >= 2)) || { launcher_error "--tool requires claude, codex or opencode"; return; }
@@ -771,54 +783,81 @@ expand_home() {
   esac
 }
 
-# Build Docker volume arguments for user-defined extra passthrough mounts.
-# Each line of $SANDBOX_EXTRA_MOUNTS is a spec: HOST[:CONTAINER[:FLAGS]].
+# Parse one extra-mount spec (HOST[:CONTAINER[:FLAGS]]) and append the matching
+# "-v ARG" pair to EXTRA_MOUNT_VOLUME_ARGS. Shared by configure_extra_mounts
+# (config/env) and configure_cli_mounts (--mount), so a CLI flag and a config
+# entry accept identical syntax:
 #   - CONTAINER defaults to the expanded HOST path (handy when the sandbox home
 #     mirrors the host home, e.g. CC Switch's own directory).
 #   - FLAGS defaults to "ro" (read-only safety default); use ":rw" to opt in.
 #   - A leading "~" / "~/" in either path expands to the host $HOME.
-# Mounts are skipped with a warning when a path is empty after expansion.
+# A spec whose path is empty after expansion is skipped with a warning.
+_add_extra_mount_spec() {  # SPEC
+  local spec="$1" host cont flags rest
+  spec="${spec#"${spec%%[![:space:]]*}"}"
+  spec="${spec%"${spec##*[![:space:]]}"}"
+  [[ -n "$spec" ]] || return 0
+
+  if [[ "$spec" != *:* ]]; then
+    host="$spec"; cont="$spec"; flags="ro"
+  else
+    host="${spec%%:*}"
+    rest="${spec#*:}"
+    if [[ "$rest" != *:* ]]; then
+      # Single token after host: "ro"/"rw" is a flag (container == host);
+      # anything else is an explicit container path.
+      if [[ "$rest" == "ro" || "$rest" == "rw" ]]; then
+        cont="$host"; flags="$rest"
+      else
+        cont="$rest"; flags="ro"
+      fi
+    else
+      cont="${rest%%:*}"; flags="${rest#*:}"
+    fi
+  fi
+
+  host="$(expand_home "$host")"
+  cont="$(expand_home "$cont")"
+  if [[ -z "$host" || -z "$cont" ]]; then
+    warn_msg "skipping invalid extra mount spec '$spec'"
+    return 0
+  fi
+
+  flags="$(echo "$flags" | tr -d '[:space:]')"
+  local vol_arg="$host:$cont"
+  [[ -n "$flags" ]] && vol_arg="$vol_arg:$flags"
+  EXTRA_MOUNT_VOLUME_ARGS+=(-v "$vol_arg")
+  return 0
+}
+
+# Build Docker volume arguments for user-defined extra passthrough mounts.
+# Each line of $SANDBOX_EXTRA_MOUNTS is a spec: HOST[:CONTAINER[:FLAGS]]
+# (parsed by _add_extra_mount_spec).
 configure_extra_mounts() {
   EXTRA_MOUNT_VOLUME_ARGS=()
   [[ "$SANDBOX_EXTRA_MOUNTS_ENABLED" == "true" ]] || return 0
 
   local spec
   while IFS= read -r spec; do
-    spec="${spec#"${spec%%[![:space:]]*}"}"
-    spec="${spec%"${spec##*[![:space:]]}"}"
-    [[ -n "$spec" ]] || continue
-
-    local host cont flags rest
-    if [[ "$spec" != *:* ]]; then
-      host="$spec"; cont="$spec"; flags="ro"
-    else
-      host="${spec%%:*}"
-      rest="${spec#*:}"
-      if [[ "$rest" != *:* ]]; then
-        # Single token after host: "ro"/"rw" is a flag (container == host);
-        # anything else is an explicit container path.
-        if [[ "$rest" == "ro" || "$rest" == "rw" ]]; then
-          cont="$host"; flags="$rest"
-        else
-          cont="$rest"; flags="ro"
-        fi
-      else
-        cont="${rest%%:*}"; flags="${rest#*:}"
-      fi
-    fi
-
-    host="$(expand_home "$host")"
-    cont="$(expand_home "$cont")"
-    if [[ -z "$host" || -z "$cont" ]]; then
-      warn_msg "skipping invalid extra mount spec '$spec'"
-      continue
-    fi
-
-    flags="$(echo "$flags" | tr -d '[:space:]')"
-    local vol_arg="$host:$cont"
-    [[ -n "$flags" ]] && vol_arg="$vol_arg:$flags"
-    EXTRA_MOUNT_VOLUME_ARGS+=(-v "$vol_arg")
+    _add_extra_mount_spec "$spec"
   done <<< "$SANDBOX_EXTRA_MOUNTS"
+  return 0
+}
+
+# Append CLI --mount specs to the extra-mount pool. Called after
+# configure_extra_mounts so a CLI spec wins on same-path overlap. The mounts
+# master switch gates --mount too (mounts.enabled / SANDBOX_EXTRA_MOUNTS_ENABLED);
+# when it is off, warn rather than silently dropping the flag.
+configure_cli_mounts() {
+  [[ -n "${CLI_MOUNTS[*]:-}" ]] || return 0
+  if [[ "$SANDBOX_EXTRA_MOUNTS_ENABLED" != "true" ]]; then
+    warn_msg "ignoring --mount: mounts are disabled (mounts.enabled: false)"
+    return 0
+  fi
+  local spec
+  for spec in "${CLI_MOUNTS[@]}"; do
+    _add_extra_mount_spec "$spec"
+  done
   return 0
 }
 
@@ -1767,6 +1806,7 @@ SANDBOX_EXTRA_MOUNTS="$(resolve_list SANDBOX_EXTRA_MOUNTS .mounts.extra)"
 SANDBOX_EXTRA_MOUNTS_ENABLED="$(resolve SANDBOX_EXTRA_MOUNTS_ENABLED .mounts.enabled true)"
 SANDBOX_AUTO_GIT_WORKTREE="$(resolve SANDBOX_AUTO_GIT_WORKTREE .mounts.auto.git_worktree true)"
 configure_extra_mounts
+configure_cli_mounts
 configure_auto_mounts
 
 # Git identity and host-config passthrough.

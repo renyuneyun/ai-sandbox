@@ -41,6 +41,10 @@ _ai_sandbox() {
             COMPREPLY=($(compgen -W "all lo" -- "$cur"))
             return 0
             ;;
+        --mount)
+            COMPREPLY=($(compgen -d -- "$cur"))
+            return 0
+            ;;
         --port|--ui-port)
             return 0
             ;;
@@ -48,7 +52,7 @@ _ai_sandbox() {
 
     if [[ "${COMP_WORDS[1]:-}" == serve ]]; then
         if [[ "$cur" == -* ]]; then
-            COMPREPLY=($(compgen -W "-h --help --tool --git-preset --hostname --port --headless --allow-local-git" -- "$cur"))
+            COMPREPLY=($(compgen -W "-h --help --tool --git-preset --hostname --port --headless --allow-local-git --mount" -- "$cur"))
         else
             COMPREPLY=($(compgen -d -- "$cur"))
         fi
@@ -57,7 +61,7 @@ _ai_sandbox() {
 
     if [[ "${COMP_WORDS[1]:-}" == openchamber ]]; then
         if [[ "$cur" == -* ]]; then
-            COMPREPLY=($(compgen -W "-h --help --tool --git-preset --hostname --port --ui-port --ui-host --keep-server --allow-local-git" -- "$cur"))
+            COMPREPLY=($(compgen -W "-h --help --tool --git-preset --hostname --port --ui-port --ui-host --keep-server --allow-local-git --mount" -- "$cur"))
         else
             COMPREPLY=($(compgen -d -- "$cur"))
         fi
@@ -65,7 +69,7 @@ _ai_sandbox() {
     fi
 
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--help -h --version -V --tool --git-preset --allow-local-git --runtime --read-home --" -- "$cur"))
+        COMPREPLY=($(compgen -W "--help -h --version -V --tool --git-preset --allow-local-git --runtime --read-home --mount --" -- "$cur"))
         return 0
     fi
 
