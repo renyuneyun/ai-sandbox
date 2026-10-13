@@ -1,8 +1,8 @@
 # More Runtimes: Host-Integrated Namespace Backend
 
 **Date:** 2026-10-10
-**Status:** Approved, pending implementation
-**Scope:** Introduce a runtime-agnostic backend seam in the launcher and add a second backend on Linux, built directly on bubblewrap (`bwrap`), that runs the selected coding agent from the host's own toolchain inside an unprivileged namespace sandbox with a layered, workspace-bounded filesystem. Docker stays the default backend. macOS (Seatbelt) and network isolation are later phases.
+**Status:** Approved; phases 0–1 implemented. Phase 2 (`serve`/`openchamber`) is specified in `2026-10-13-bwrap-serve-design.md`.
+**Scope:** Introduce a runtime-agnostic backend seam in the launcher and add a second backend on Linux, built directly on bubblewrap (`bwrap`), that runs the selected coding agent from the host's own toolchain inside an unprivileged namespace sandbox with a layered, workspace-bounded filesystem. Docker stays the default backend. macOS (Seatbelt) and network isolation are later phases. Extending the backend to the detached OpenCode server (`serve`) and `openchamber` is specified separately in `2026-10-13-bwrap-serve-design.md`.
 
 ## Goal
 
@@ -40,7 +40,7 @@ The threat model is unchanged from `docs/tradeoffs.md`: **accidental damage by t
 - Replacing Docker as the default runtime, or removing the Docker backend.
 - Supporting arbitrary user-defined runtimes or commands.
 - Network isolation in the first phase (the container shares the host network today; bwrap does the same).
-- `serve` (detached OpenCode server), the cleanup container, the per-UID `ai-agent-home` volume, and root-user mode under the bwrap backend in the first phase. These stay Docker-only until a later phase.
+- The cleanup container, the per-UID `ai-agent-home` volume, and root-user mode under the bwrap backend. These stay Docker-only. (`serve`/`openchamber` were also deferred here and are now specified in `2026-10-13-bwrap-serve-design.md`.)
 - macOS and Windows in the first phase. macOS Seatbelt is a designed follow-on on the same seam.
 - seccomp/Landlock hardening and `--unshare-net` in the first phase.
 - Changing the Docker image, compose file, or any existing Docker behavior.
@@ -50,7 +50,7 @@ The threat model is unchanged from `docs/tradeoffs.md`: **accidental damage by t
 - **Framework:** build directly on `bwrap`; assemble the policy in the launcher (pure shell, no compiled helper).
 - **Default runtime:** `docker`. `bwrap` is opt-in via CLI/env/config.
 - **`$HOME` model:** a **persistent per-workspace home layer**, plus a **toolchain passthrough allowlist**. The real home is not bound read-write. Whether the whole real home is *readable* is a separate, easily toggled option (`--read-home` / `bwrap.read_home`, default off).
-- **Phase 1 scope:** Linux interactive runs only. `serve` stays Docker-only.
+- **Phase 1 scope:** Linux interactive runs only. `serve`/`openchamber` follow in phase 2 (see `2026-10-13-bwrap-serve-design.md`).
 - **Network:** shared with the host in phase 1.
 
 ## Configuration
@@ -111,7 +111,7 @@ ai-sandbox --runtime bwrap              # real home hidden (default)
 ai-sandbox --runtime bwrap --read-home  # whole home readable, writes still isolated
 ```
 
-`--runtime` is **not** valid for `serve` in phase 1 (serve is Docker-only); `serve` with `--runtime bwrap` fails with a clear message. `asb serve ...` continues to use Docker.
+In phase 1 `--runtime` was **not** valid for `serve` (Docker-only, rejected with a clear message). Phase 2 lifts this: `serve`/`openchamber` accept `--runtime bwrap` — see `2026-10-13-bwrap-serve-design.md`.
 
 ## Architecture
 
@@ -123,7 +123,7 @@ The launcher already builds structured, backend-adaptable arrays: each `*_VOLUME
 - The `bwrap` renderer walks the same arrays and translates each `-v HOST:CONT:FLAGS` into `--ro-bind HOST CONT` (`ro`) or `--bind HOST CONT` (`rw`), and each `-e NAME=VALUE` into `--setenv NAME VALUE`.
 - Backend-specific mounts (the system allowlist, the home layer, `--proc`/`--dev`/`--tmpfs /tmp`, the git-wrapper rebind, the generated system gitconfig) and namespace flags are added by the bwrap prepare step, not by the shared builders.
 
-This keeps the Docker path untouched, makes the bwrap translation a small independently testable unit, and lets a future backend (e.g. Seatbelt) render the same arrays. The seam's stable internal contract is therefore: the `-v`/`-e` array families are the specification, and each backend provides `prepare`, `render`, `available`, and (Docker-only) `serve` hooks.
+This keeps the Docker path untouched, makes the bwrap translation a small independently testable unit, and lets a future backend (e.g. Seatbelt) render the same arrays. The seam's stable internal contract is therefore: the `-v`/`-e` array families are the specification, and each backend provides `prepare`, `render`, `available`, and `serve` hooks (Docker-only in phase 1, both backends from phase 2 — see `2026-10-13-bwrap-serve-design.md`).
 
 ### Backend hooks
 
@@ -133,7 +133,7 @@ Each backend provides:
 - `runtime_available` — return non-zero with an actionable message when the backend cannot run (missing `bwrap`, or unprivileged user namespaces disabled).
 - `runtime_warmup` — a best-effort pre-launch step. For Docker this stays the `npx --version` fetch; for bwrap it is a `--version` sanity check of the host tool (or a no-op).
 - `runtime_run` — foreground interactive execution.
-- `runtime_serve_{start,attach,stop}` — Docker only in phase 1; the bwrap versions fail with the Docker-only message.
+- `runtime_serve_{start,attach,stop}` — Docker in phase 1; the bwrap implementations are added by `2026-10-13-bwrap-serve-design.md`.
 - `runtime_cleanup` — Docker's stub-dir cleanup; a no-op for bwrap.
 
 All new functions are defined **outside** the main guard, consistent with the existing testability invariant.
@@ -186,7 +186,7 @@ Unchanged in behavior. The refactor only routes it through the seam; the rendere
 | Read isolation | Only mounted paths visible | Allowlist-defined (strict by default) |
 | Identity | Mirrored host UID/GID via entrypoint | Invoking host user directly |
 | Git policy | Wrapper + entrypoint system config | Wrapper + generated system config |
-| `serve` | Yes | No (phase 2) |
+| `serve` | Yes | Yes (phase 2; `2026-10-13-bwrap-serve-design.md`) |
 | Cleanup container / root mode / volume | Yes | Not applicable |
 | Network | host | host (phase 1) |
 | Browser MCP | Yes | Yes |
@@ -207,7 +207,6 @@ Before starting the sandbox, the launcher rejects:
 
 - an unknown `runtime` value, listing `docker` and `bwrap`;
 - `--runtime` without a value;
-- `--runtime bwrap` combined with `serve`;
 - a bwrap run when `bwrap` is absent, or when user namespaces are unavailable, with the remediation above.
 
 Runtime failures inside the sandbox surface as the selected tool's own errors, unchanged.
@@ -216,7 +215,7 @@ Runtime failures inside the sandbox surface as the selected tool's own errors, u
 
 1. **Phase 0 — seam only.** Introduce the `runtime` selector, the `--runtime` flag, backend dispatch, and the extracted `docker` renderer. No observable behavior change; existing tests stay green.
 2. **Phase 1 — bwrap interactive backend (this spec's implementation target).** Resolution, detection, filesystem model, host-tool run, git wrapper/config, env/mounts, browser MCP, error handling, docs.
-3. **Phase 2 (later specs).** bwrap `serve`; network isolation (`--unshare-net` + proxy); optional seccomp/Landlock hardening; macOS Seatbelt on the same seam (possibly via `srt`).
+3. **Phase 2.** bwrap `serve`/`openchamber` (`2026-10-13-bwrap-serve-design.md`); network isolation (`--unshare-net` + proxy); optional seccomp/Landlock hardening; macOS Seatbelt on the same seam (possibly via `srt`).
 
 This spec's implementation plan covers phases 0 and 1.
 
@@ -226,7 +225,7 @@ Source-level (host, no root, no Docker):
 
 - `runtime` resolution precedence (CLI > env > workspace > user > default).
 - `read_home` resolution precedence, the `--read-home` presence flag, and the warning when it is set with the Docker backend.
-- Unknown `runtime` and missing-value rejection; `serve` + `bwrap` rejection.
+- Unknown `runtime` and missing-value rejection. (The phase-1 `serve` + `bwrap` rejection is superseded by `2026-10-13-bwrap-serve-design.md`.)
 - The `-v`/`-e` specification arrays are populated for every existing concern (tool config, git config/policy/identity, proxy, host settings, extra/auto mounts, browser), unchanged.
 - **Docker renderer regression:** the rendered `docker compose run`/`docker exec` command is byte-identical to the pre-refactor command for a representative matrix of tools and options.
 - bwrap renderer argv assembly: namespace flags, allowlist binds, home layer bind, workspace bind, config binds, git wrapper binding, generated system gitconfig, env vars, workdir, and command.
@@ -245,7 +244,7 @@ Integration (skipped when `bwrap` or user namespaces are unavailable):
 
 Per the "Keeping docs in sync" checklist:
 
-- `README.md` — tick "More runtimes", document `--runtime`, the bwrap backend, the home layer, and the host-toolchain reuse; note `serve` remains Docker-only.
+- `README.md` — tick "More runtimes", document `--runtime`, the bwrap backend, the home layer, and the host-toolchain reuse. (`serve` was Docker-only in phase 1; see `2026-10-13-bwrap-serve-design.md`.)
 - `share/ai-sandbox/config.example.yaml` — `runtime`, `bwrap.passthrough`, `bwrap.deny`, `bwrap.read_home`.
 - `docs/configuration.md` — schema and per-knob reference for the new keys.
 - `docs/architecture.md` — a backend-seam section, the bwrap filesystem model, and the volume/lifecycle tables.
