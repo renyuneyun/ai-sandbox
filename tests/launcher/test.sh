@@ -248,6 +248,9 @@ HELP_OUT="$(print_help)"
 [[ "$HELP_OUT" == *"--help"* && "$HELP_OUT" == *"--version"* ]] &&
   ok "help: print_help lists --help and --version" ||
   bad "help: print_help lists --help and --version"
+[[ "$HELP_OUT" == *"--runtime"* && "$HELP_OUT" == *"--read-home"* ]] &&
+  ok "help: runtime options documented" ||
+  bad "help: runtime options documented"
 
 # --help must print usage on stdout, exit 0, and never reach docker.
 HELP_DIR="$(mktemp -d)"
@@ -336,7 +339,7 @@ reset_profile_context() {
     PROFILE_TMP_DIRS+=("$PROFILE_TMP")
     HOME="$PROFILE_TMP/host-home"
     SANDBOX_HOME="/home/tester"
-    mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode" "$HOME/.local/share/opencode"
+    mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode" "$HOME/.local/share/opencode" "$HOME/.cache/opencode"
     printf '{}\n' > "$HOME/.claude.json"
     WORKSPACE_CONFIG="$PROFILE_TMP/missing-workspace.yaml"
     USER_CONFIG="$PROFILE_TMP/missing-user.yaml"
@@ -344,7 +347,7 @@ reset_profile_context() {
     USER_CONFIG_VALID=false
     unset CLAUDE_VERSION CLAUDE_CONFIG_PASSTHROUGH CLAUDE_CONFIG_DIR CLAUDE_CONFIG_FILE
     unset CODEX_VERSION CODEX_CONFIG_PASSTHROUGH CODEX_CONFIG_DIR
-    unset OPENCODE_VERSION OPENCODE_CONFIG_PASSTHROUGH OPENCODE_DATA_PASSTHROUGH OPENCODE_CONFIG_DIR OPENCODE_DATA_DIR
+    unset OPENCODE_VERSION OPENCODE_CONFIG_PASSTHROUGH OPENCODE_DATA_PASSTHROUGH OPENCODE_CACHE_PASSTHROUGH OPENCODE_CONFIG_DIR OPENCODE_DATA_DIR OPENCODE_CACHE_DIR
     unset ANTHROPIC_API_KEY OPENAI_API_KEY
     unset CLI_TOOL_VERSION CLI_RESOLVED_TOOL
 }
@@ -410,9 +413,10 @@ configure_tool opencode
 assert_eq "profile OpenCode: v1 package" "opencode-ai@1.18.29" "$TOOL_PACKAGE"
 assert_eq "profile OpenCode: v1 autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
 assert_eq "profile OpenCode: v1 has no standalone flag" "1" "${#TOOL_DEFAULT_ARGS[@]}"
-assert_eq "profile OpenCode: two mounts" "4" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: three mounts" "6" "${#TOOL_VOLUME_ARGS[@]}"
 assert_eq "profile OpenCode: config mount destination" "$HOME/.config/opencode:$SANDBOX_HOME/.config/opencode" "${TOOL_VOLUME_ARGS[1]}"
 assert_eq "profile OpenCode: data mount destination" "$HOME/.local/share/opencode:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[3]}"
+assert_eq "profile OpenCode: cache mount destination" "$HOME/.cache/opencode:$SANDBOX_HOME/.cache/opencode" "${TOOL_VOLUME_ARGS[5]}"
 assert_eq "profile OpenCode: two API key pairs" "4" "${#TOOL_ENV_ARGS[@]}"
 [[ "$(printf '<%s>' "${TOOL_ENV_ARGS[@]}")" == *"<ANTHROPIC_API_KEY=anthropic-secret>"* &&
    "$(printf '<%s>' "${TOOL_ENV_ARGS[@]}")" == *"<OPENAI_API_KEY=openai-secret>"* ]] &&
@@ -427,7 +431,7 @@ configure_tool opencode
 assert_eq "profile OpenCode: v2 package" "@opencode/cli@2.0.18" "$TOOL_PACKAGE"
 assert_eq "profile OpenCode: v2 autonomy flag" "--auto" "${TOOL_DEFAULT_ARGS[0]}"
 assert_eq "profile OpenCode: v2 standalone flag" "--standalone" "${TOOL_DEFAULT_ARGS[1]}"
-assert_eq "profile OpenCode: v2 two mounts" "4" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: v2 three mounts" "6" "${#TOOL_VOLUME_ARGS[@]}"
 assert_eq "profile OpenCode: v2 two API key pairs" "4" "${#TOOL_ENV_ARGS[@]}"
 
 reset_profile_context
@@ -443,13 +447,14 @@ assert_eq "profile OpenCode: leading v in version is tolerated" "@opencode/cli@v
 reset_profile_context
 OPENCODE_CONFIG_PASSTHROUGH=false
 OPENCODE_DATA_PASSTHROUGH=false
+OPENCODE_CACHE_PASSTHROUGH=false
 configure_tool opencode
-assert_eq "profile OpenCode: both passthroughs disabled" "0" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: all passthroughs disabled" "0" "${#TOOL_VOLUME_ARGS[@]}"
 
 reset_profile_context
 OPENCODE_CONFIG_PASSTHROUGH=false
 configure_tool opencode
-assert_eq "profile OpenCode: config-only passthrough" "2" "${#TOOL_VOLUME_ARGS[@]}"
+assert_eq "profile OpenCode: config-only passthrough" "4" "${#TOOL_VOLUME_ARGS[@]}"
 assert_eq "profile OpenCode: data-only mount destination" "$HOME/.local/share/opencode:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[1]}"
 
 reset_profile_context
@@ -459,6 +464,17 @@ mkdir -p "$OPENCODE_CONFIG_DIR" "$OPENCODE_DATA_DIR"
 configure_tool opencode
 assert_eq "profile OpenCode: custom config mount preserves spaces" "$OPENCODE_CONFIG_DIR:$SANDBOX_HOME/.config/opencode" "${TOOL_VOLUME_ARGS[1]}"
 assert_eq "profile OpenCode: custom data mount preserves spaces" "$OPENCODE_DATA_DIR:$SANDBOX_HOME/.local/share/opencode" "${TOOL_VOLUME_ARGS[3]}"
+
+reset_profile_context
+OPENCODE_CACHE_PASSTHROUGH=false
+configure_tool opencode
+assert_eq "profile OpenCode: cache-only passthrough disabled" "4" "${#TOOL_VOLUME_ARGS[@]}"
+
+reset_profile_context
+OPENCODE_CACHE_DIR="$PROFILE_TMP/custom opencode cache"
+mkdir -p "$OPENCODE_CACHE_DIR"
+configure_tool opencode
+assert_eq "profile OpenCode: custom cache mount preserves spaces" "$OPENCODE_CACHE_DIR:$SANDBOX_HOME/.cache/opencode" "${TOOL_VOLUME_ARGS[5]}"
 
 reset_profile_context
 STUB_BIN="$PROFILE_TMP/bin"
@@ -1365,10 +1381,229 @@ assert_eq "progress: disabled skips warm-up" "1" "$(cat "$CAPTURE_DIR_NOWARM/doc
 # Runtime dispatch: bwrap must not invoke docker.
 CAPTURE_DIR_BWRAP_DISPATCH="$(mktemp -d)"
 PROFILE_TMP_DIRS+=("$CAPTURE_DIR_BWRAP_DISPATCH")
+# Stub bwrap and the selected tool so the dispatch test never runs a real
+# sandbox or the host agent.
+mkdir -p "$CAPTURE_DIR_BWRAP_DISPATCH/bin"
+printf '#!/bin/sh\nexit 0\n' > "$CAPTURE_DIR_BWRAP_DISPATCH/bin/bwrap"
+printf '#!/bin/sh\nexit 0\n' > "$CAPTURE_DIR_BWRAP_DISPATCH/bin/claude"
+chmod +x "$CAPTURE_DIR_BWRAP_DISPATCH/bin/bwrap" "$CAPTURE_DIR_BWRAP_DISPATCH/bin/claude"
 run_captured_launcher "$CAPTURE_DIR_BWRAP_DISPATCH" --runtime bwrap "$SCRIPT_DIR/../.." || true
 [[ ! -e "$CAPTURE_DIR_BWRAP_DISPATCH/docker.args" ]] &&
   ok "dispatch: bwrap runtime does not call docker" ||
   bad "dispatch: bwrap runtime does not call docker"
+
+# bwrap detection: a stub bwrap that succeeds is available; a missing bwrap is not.
+DETECT_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$DETECT_DIR")
+mkdir -p "$DETECT_DIR/bin"
+printf '#!/bin/sh\nexit 0\n' > "$DETECT_DIR/bin/bwrap"
+chmod +x "$DETECT_DIR/bin/bwrap"
+OLD_PATH="$PATH"
+PATH="$DETECT_DIR/bin:$PATH"
+if bwrap_available; then ok "bwrap: available when bwrap probe succeeds"; else bad "bwrap: available when bwrap probe succeeds"; fi
+
+PATH="$DETECT_DIR/empty"
+mkdir -p "$PATH"
+detect_out="$(bwrap_available 2>&1)" && detect_code=0 || detect_code=$?
+[[ $detect_code -ne 0 && "$detect_out" == *"bwrap"* ]] &&
+  ok "bwrap: missing bwrap is reported with a message" ||
+  bad "bwrap: missing bwrap is reported with a message (code=$detect_code, out='$detect_out')"
+PATH="$OLD_PATH"
+
+# bwrap mount translation: -v HOST:CONT[:FLAGS] -> --ro-bind/--bind.
+SANDBOX_HOME="/home/tester"
+BWRAP_HOME="/host/tester"
+bwrap_translate_mounts -v "/host/tester/.claude:/home/tester/.claude:rw" -v "/etc/localtime:/etc/localtime:ro" -v "/opt/x:/opt/x"
+JOINED="$(printf '<%s>' "${BWRAP_MOUNT_ARGS[@]}")"
+assert_eq "bwrap mounts: rewritten cont path" "<--bind></host/tester/.claude></host/tester/.claude>" \
+  "$(printf '<%s>' "${BWRAP_MOUNT_ARGS[0]}" "${BWRAP_MOUNT_ARGS[1]}" "${BWRAP_MOUNT_ARGS[2]}")"
+[[ "$JOINED" == *"<--ro-bind></etc/localtime></etc/localtime>"* ]] &&
+  ok "bwrap mounts: ro flag maps to --ro-bind" || bad "bwrap mounts: ro flag ($JOINED)"
+[[ "$JOINED" == *"<--bind></opt/x></opt/x>"* ]] &&
+  ok "bwrap mounts: default (no flag) is read-write" || bad "bwrap mounts: default rw ($JOINED)"
+assert_eq "bwrap rewrite: exact home" "/host/tester" "$(bwrap_rewrite_cont_path /home/tester)"
+assert_eq "bwrap rewrite: under home" "/host/tester/.codex" "$(bwrap_rewrite_cont_path /home/tester/.codex)"
+assert_eq "bwrap rewrite: unrelated path" "/etc/hosts" "$(bwrap_rewrite_cont_path /etc/hosts)"
+unset SANDBOX_HOME BWRAP_HOME
+
+# bwrap env translation: -e K=V -> --setenv K V, preserving '=' in values.
+if declare -F bwrap_translate_env >/dev/null; then
+  bwrap_translate_env -e "ANTHROPIC_API_KEY=sk-a=b" -e "TZ=Pacific/Auckland"
+  assert_eq "bwrap env: count" "6" "${#BWRAP_TRANSLATED_ENV[@]}"
+  assert_eq "bwrap env: key" "--setenv" "${BWRAP_TRANSLATED_ENV[0]}"
+  assert_eq "bwrap env: value keeps equals" "sk-a=b" "${BWRAP_TRANSLATED_ENV[2]}"
+  assert_eq "bwrap env: second value" "Pacific/Auckland" "${BWRAP_TRANSLATED_ENV[5]}"
+else
+  bad "bwrap env: bwrap_translate_env exists"
+fi
+
+# bwrap base view: namespaces, system allowlist, home layer, deny list.
+if declare -F bwrap_prepare_base >/dev/null; then
+  BASE_DIR="$(mktemp -d)"
+  PROFILE_TMP_DIRS+=("$BASE_DIR")
+  mkdir -p "$BASE_DIR/state" "$BASE_DIR/home"
+  OLD_HOME="${HOME:-}"
+  OLD_STATE="${XDG_STATE_HOME:-}"
+  WORKSPACE_DIR="/ws/proj"
+  XDG_STATE_HOME="$BASE_DIR/state"
+  HOME="$BASE_DIR/home"
+  READ_HOME=false
+  SANDBOX_BWRAP_PASSTHROUGH=""
+  SANDBOX_BWRAP_DENY=""
+  bwrap_prepare_base
+  BASE_JOINED="$(printf '<%s>' "${BWRAP_BASE_ARGS[@]}")"
+  [[ "$BASE_JOINED" == *"<--unshare-all><--share-net>"* ]] &&
+    ok "bwrap base: namespaces unshared with host net" || bad "bwrap base: namespaces ($BASE_JOINED)"
+  [[ "$BASE_JOINED" == *"<--die-with-parent>"* ]] &&
+    ok "bwrap base: die-with-parent reaps the agent" || bad "bwrap base: die-with-parent ($BASE_JOINED)"
+  [[ "$BASE_JOINED" != *"<--new-session>"* ]] &&
+    ok "bwrap base: no --new-session (terminal resize/signals reach the agent)" ||
+    bad "bwrap base: --new-session detaches the terminal ($BASE_JOINED)"
+  [[ "$BASE_JOINED" == *"<--proc></proc>"* && "$BASE_JOINED" == *"<--dev></dev>"* && "$BASE_JOINED" == *"<--tmpfs></tmp>"* ]] &&
+    ok "bwrap base: proc/dev/tmp mounted" || bad "bwrap base: runtime dirs ($BASE_JOINED)"
+  [[ "$BASE_JOINED" == *"<--bind><$BWRAP_LAYER_DIR><$HOME>"* ]] &&
+    ok "bwrap base: home layer bound at real home" || bad "bwrap base: home layer ($BASE_JOINED)"
+  [[ "$BWRAP_LAYER_DIR" == "$BASE_DIR/state/ai-sandbox/runtime/bwrap/"*"/home" ]] &&
+    ok "bwrap base: layer path is workspace-scoped under XDG state" || bad "bwrap base: layer path ($BWRAP_LAYER_DIR)"
+  # A symlinked host /etc/resolv.conf (systemd-resolved) points into /run, so
+  # its target must be bound too or DNS fails inside the sandbox. Assert only
+  # when the host uses such a symlink; static or missing resolv.conf is a no-op.
+  RESOLV_REAL="$(readlink -f /etc/resolv.conf 2>/dev/null)" || RESOLV_REAL=""
+  if [[ -n "$RESOLV_REAL" && -f "$RESOLV_REAL" && "$RESOLV_REAL" != "/etc/resolv.conf" ]]; then
+    [[ "$BASE_JOINED" == *"<--ro-bind><$RESOLV_REAL><$RESOLV_REAL>"* ]] &&
+      ok "bwrap base: symlinked resolv.conf target is bound" ||
+      bad "bwrap base: resolv.conf target not bound ($BASE_JOINED)"
+  fi
+
+  READ_HOME=true
+  bwrap_prepare_base
+  BASE_JOINED="$(printf '<%s>' "${BWRAP_BASE_ARGS[@]}")"
+  [[ "$BASE_JOINED" == *"<--overlay-src><$HOME>"* && "$BASE_JOINED" == *"<--overlay>"* ]] &&
+    ok "bwrap base: read-home uses overlay lower" || bad "bwrap base: read-home overlay ($BASE_JOINED)"
+
+  SANDBOX_BWRAP_DENY=$"$HOME/.ssh
+/definitely/missing"
+  mkdir -p "$HOME/.ssh"
+  : > "$HOME/.netrc"
+  bwrap_prepare_base
+  BASE_JOINED="$(printf '<%s>' "${BWRAP_BASE_ARGS[@]}")"
+  [[ "$BASE_JOINED" == *"<--tmpfs><$HOME/.ssh>"* ]] &&
+    ok "bwrap base: existing deny directory is shadowed" || bad "bwrap base: deny dir shadow ($BASE_JOINED)"
+  [[ "$BASE_JOINED" == *"<--ro-bind></dev/null><$HOME/.netrc>"* ]] &&
+    ok "bwrap base: existing deny file is masked with /dev/null" || bad "bwrap base: deny file mask ($BASE_JOINED)"
+  [[ "$BASE_JOINED" != *"/definitely/missing"* ]] &&
+    ok "bwrap base: missing deny path is skipped" || bad "bwrap base: missing deny skipped ($BASE_JOINED)"
+  HOME="${OLD_HOME:-}"
+  XDG_STATE_HOME="${OLD_STATE:-}"
+  unset READ_HOME SANDBOX_BWRAP_PASSTHROUGH SANDBOX_BWRAP_DENY
+else
+  bad "bwrap base: bwrap_prepare_base exists"
+fi
+
+# bwrap base: the per-user toolchain allowlist must expose ~/.local/bin without
+# shadowing ~/.local/state (the default XDG_STATE_HOME), which has to stay on
+# the writable home layer so agents can create locks/state there.
+if declare -F bwrap_prepare_base >/dev/null; then
+  LOCAL_DIR="$(mktemp -d)"
+  PROFILE_TMP_DIRS+=("$LOCAL_DIR")
+  mkdir -p "$LOCAL_DIR/home/.local/bin" "$LOCAL_DIR/home/.local/state" "$LOCAL_DIR/state"
+  OLD_HOME="${HOME:-}"
+  OLD_STATE="${XDG_STATE_HOME:-}"
+  WORKSPACE_DIR="/ws/proj"
+  XDG_STATE_HOME="$LOCAL_DIR/state"
+  HOME="$LOCAL_DIR/home"
+  READ_HOME=false
+  SANDBOX_BWRAP_PASSTHROUGH=""
+  SANDBOX_BWRAP_DENY=""
+  bwrap_prepare_base
+  BASE_JOINED="$(printf '<%s>' "${BWRAP_BASE_ARGS[@]}")"
+  [[ "$BASE_JOINED" == *"<--ro-bind><$HOME/.local/bin><$HOME/.local/bin>"* ]] &&
+    ok "bwrap base: .local/bin toolchain is exposed read-only" ||
+    bad "bwrap base: .local/bin toolchain exposed ($BASE_JOINED)"
+  [[ "$BASE_JOINED" != *"<--ro-bind><$HOME/.local><$HOME/.local>"* ]] &&
+    ok "bwrap base: .local is not bound wholesale" ||
+    bad "bwrap base: .local bound wholesale ($BASE_JOINED)"
+  [[ "$BASE_JOINED" != *"$HOME/.local/state"* ]] &&
+    ok "bwrap base: .local/state is not shadowed read-only" ||
+    bad "bwrap base: .local/state shadowed ($BASE_JOINED)"
+  HOME="${OLD_HOME:-}"
+  XDG_STATE_HOME="${OLD_STATE:-}"
+  unset READ_HOME SANDBOX_BWRAP_PASSTHROUGH SANDBOX_BWRAP_DENY
+else
+  bad "bwrap base: bwrap_prepare_base exists"
+fi
+
+# bwrap git: wrapper rebound at /usr/local/bin/git; generated system config.
+if declare -F bwrap_prepare_git >/dev/null; then
+  GITPREP_DIR="$(mktemp -d)"
+  PROFILE_TMP_DIRS+=("$GITPREP_DIR")
+  SANDBOX_COMPOSE_DIR="$GITPREP_DIR/data"
+  mkdir -p "$SANDBOX_COMPOSE_DIR"
+  printf '#!/bin/sh\n' > "$SANDBOX_COMPOSE_DIR/git-wrapper"
+  SANDBOX_HOME="/home/tester"
+  BWRAP_HOME="/host/tester"
+  BWRAP_GITCONFIG=""
+  bwrap_prepare_git
+  GIT_JOINED="$(printf '<%s>' "${BWRAP_GIT_ARGS[@]}")"
+  [[ "$GIT_JOINED" == *"<--ro-bind><$SANDBOX_COMPOSE_DIR/git-wrapper></run/ai-sandbox/bin/git>"* ]] &&
+    ok "bwrap git: wrapper rebound under /run/ai-sandbox/bin" || bad "bwrap git: wrapper rebind ($GIT_JOINED)"
+  [[ "$GIT_JOINED" == *"<$BWRAP_GITCONFIG></run/ai-sandbox/gitconfig>"* ]] &&
+    ok "bwrap git: generated system config bound" || bad "bwrap git: generated config ($GIT_JOINED)"
+  [[ -n "$BWRAP_GITCONFIG" && -f "$BWRAP_GITCONFIG" ]] &&
+    ok "bwrap git: generated config file exists" || bad "bwrap git: generated config file"
+  grep -q "insteadOf" "$BWRAP_GITCONFIG" &&
+    ok "bwrap git: config blocks remote URLs" || bad "bwrap git: config blocks remote URLs"
+  rm -f "$BWRAP_GITCONFIG"
+  unset SANDBOX_COMPOSE_DIR BWRAP_HOME BWRAP_GITCONFIG
+else
+  bad "bwrap git: bwrap_prepare_git exists"
+fi
+
+# bwrap run assembly: a stub bwrap captures the full argv.
+if declare -F bwrap_prepare_env >/dev/null; then
+  RUN_DIR="$(mktemp -d)"
+  PROFILE_TMP_DIRS+=("$RUN_DIR")
+  mkdir -p "$RUN_DIR/bin" "$RUN_DIR/state" "$RUN_DIR/home" "$RUN_DIR/ws"
+  printf '#!/bin/sh\nprintf "%%s\\0" "$@" > "$BWRAP_CAPTURE"\n' > "$RUN_DIR/bin/bwrap"
+  chmod +x "$RUN_DIR/bin/bwrap"
+  printf '#!/bin/sh\necho "claude 9.9.9"\n' > "$RUN_DIR/bin/claude"
+  chmod +x "$RUN_DIR/bin/claude"
+  OLD_HOME="${HOME:-}"; OLD_PATH="${PATH:-}"
+  SELECTED_TOOL=claude
+  TOOL_DEFAULT_ARGS=(--dangerously-skip-permissions)
+  TOOL_USER_ARGS=(--resume)
+  WORKSPACE_DIR="$RUN_DIR/ws"
+  SANDBOX_HOME="/home/tester"
+  SANDBOX_COMPOSE_DIR="$SCRIPT_DIR/../../share/ai-sandbox"
+  XDG_STATE_HOME="$RUN_DIR/state"
+  HOME="$RUN_DIR/home"
+  READ_HOME=false
+  TOOL_VOLUME_ARGS=(); TOOL_ENV_ARGS=(); PROXY_ENV_ARGS=(); HOST_SETTINGS_ENV_ARGS=()
+  HOST_SETTINGS_VOLUME_ARGS=(); GIT_ENV_ARGS=(); GIT_MODE_ENV_ARGS=(); GIT_VOLUME_ARGS=()
+  GIT_POLICY_VOLUME_ARGS=(); BROWSER_ENV_ARGS=(); BROWSER_VOLUME_ARGS=(); EXTRA_MOUNT_VOLUME_ARGS=()
+  BWRAP_GITCONFIG=""
+  export BWRAP_CAPTURE="$RUN_DIR/bwrap.args"
+  PATH="$RUN_DIR/bin:$PATH" run_bwrap_agent
+  mapfile -d '' -t CAPTURED_BWRAP < "$RUN_DIR/bwrap.args"
+  JOINED="$(printf '<%s>' "${CAPTURED_BWRAP[@]}")"
+  [[ "$JOINED" == *"<--unshare-all><--share-net>"* ]] &&
+    ok "bwrap run: namespaces present" || bad "bwrap run: namespaces ($JOINED)"
+  [[ "$JOINED" == *"<--setenv><IS_SANDBOX><1>"* ]] &&
+    ok "bwrap run: IS_SANDBOX set" || bad "bwrap run: IS_SANDBOX ($JOINED)"
+  [[ "$JOINED" == *"<--chdir><$WORKSPACE_DIR>"* ]] &&
+    ok "bwrap run: chdir to workspace" || bad "bwrap run: chdir ($JOINED)"
+  [[ "$JOINED" == *"<$RUN_DIR/bin/claude><--dangerously-skip-permissions><--resume>"* ]] &&
+    ok "bwrap run: host tool with defaults then user args" || bad "bwrap run: command ($JOINED)"
+
+  PATH="$RUN_DIR/bin:$PATH" SELECTED_TOOL=nonexistent \
+    bwrap_resolve_host_tool nonexistent >/dev/null 2>&1 && code=0 || code=$?
+  [[ $code -ne 0 ]] && ok "bwrap run: missing host tool is rejected" || bad "bwrap run: missing host tool"
+  HOME="${OLD_HOME:-}"; PATH="$OLD_PATH"
+  unset BWRAP_CAPTURE
+  rm -f "$BWRAP_GITCONFIG"; unset BWRAP_GITCONFIG
+else
+  bad "bwrap run: bwrap_prepare_env exists"
+fi
 
 # Static per-phase lines appear on stderr in non-TTY mode.
 CAPTURE_DIR_STATIC="$(mktemp -d)"
@@ -1410,6 +1645,9 @@ if [[ -s "$COMPLETION_FILE" ]]; then
         [[ "$COMPLETION_JOINED" == *"--tool"* && "$COMPLETION_JOINED" == *"--allow-local-git"* && "$COMPLETION_JOINED" == *"--git-preset"* && "$COMPLETION_JOINED" == *"--help"* ]] &&
           ok "completion: options included in flag completion" ||
           bad "completion: options included in flag completion ($COMPLETION_JOINED)"
+        [[ "$COMPLETION_JOINED" == *"--runtime"* && "$COMPLETION_JOINED" == *"--read-home"* ]] &&
+          ok "completion: runtime options included" ||
+          bad "completion: runtime options included ($COMPLETION_JOINED)"
     else
         bad "completion: _ai_sandbox function exists"
     fi

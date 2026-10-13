@@ -34,6 +34,12 @@ All fields optional:
 
 ```yaml
 tool: codex                       # claude, codex or opencode; default: claude
+runtime: docker                   # docker | bwrap; default: docker
+
+bwrap:
+  passthrough: []                 # list HOST[:rw], default: empty - added to the built-in toolchain allowlist
+  deny: []                        # list HOST, default: empty - added to the built-in secret deny list (read_home only)
+  read_home: false                # bool, default: false - make the entire real home readable (writes stay in the layer)
 
 claude:
   version: "2.1.152"            # string,  default: host's claude version
@@ -50,8 +56,10 @@ opencode:
   version: "2.0.18"             # string,  default: installed host OpenCode version or v1; 1.x/empty -> opencode-ai, 2.x -> @opencode/cli
   config_passthrough: true      # bool,    default: true
   data_passthrough: true        # bool,    default: true
+  cache_passthrough: true       # bool,    default: true
   config_dir: ~/.config/opencode        # string, default: ~/.config/opencode
   data_dir: ~/.local/share/opencode     # string, default: ~/.local/share/opencode
+  cache_dir: ~/.cache/opencode          # string, default: ~/.cache/opencode
 
 proxy:
   env_passthrough: true         # bool,    default: true
@@ -101,6 +109,26 @@ sandbox:
   username: claude-bot
   home: /home/claude-bot
 ```
+
+## Runtime
+
+`runtime` selects the sandbox backend. `docker` (default) runs the agent in the image container; `bwrap` runs the host's own toolchain inside an unprivileged bubblewrap user-namespace sandbox.
+
+Precedence: `--runtime` > `SANDBOX_RUNTIME` > workspace `runtime` > user `runtime` > `docker`. An unknown value fails before anything runs.
+
+```sh
+asb --runtime bwrap
+```
+
+`bwrap` knobs:
+
+| YAML key | Env var | Default | Meaning |
+|---|---|---|---|
+| `bwrap.passthrough` | `SANDBOX_BWRAP_PASSTHROUGH` (newline list) | empty | Extra host paths to expose, read-only unless suffixed `:rw`. Added to the built-in system + per-user toolchain allowlist. |
+| `bwrap.deny` | `SANDBOX_BWRAP_DENY` (newline list) | empty | Extra host paths to shadow with an empty view. Added to the built-in secret list; only meaningful with `read_home`. |
+| `bwrap.read_home` | `SANDBOX_BWRAP_READ_HOME` | `false` | Whether the entire real home is readable. CLI: `--read-home`. |
+
+Under `bwrap`, `$HOME` is a persistent per-workspace layer under `${XDG_STATE_HOME:-~/.local/state}/ai-sandbox/runtime/bwrap/<hash>/home`; writes there never touch the real home. With `read_home: true` the real home becomes the read-only lower layer of that overlay, so it is readable but still not writable. The `sandbox.uid/gid/username/home` identity knobs and version pins do not apply to `bwrap` (the host user and host CLI are used). Generated files that the Docker backend puts at `/usr/local/bin/git`, `/etc/gitconfig`, and `/etc/ai-sandbox/*` are instead placed under the writable `/run/ai-sandbox` inside the namespace (with `PATH`, `GIT_CONFIG_SYSTEM`, and `GIT_POLICY_FILE` pointing at them). `serve` supports only `docker` in this release.
 
 ## User identity
 
@@ -217,10 +245,11 @@ Codex similarly bind-mounts the host's `~/.codex` directory read/write at `${SAN
 
 ## OpenCode config and data passthrough
 
-OpenCode splits its state across two host directories, and each is mounted (and toggleable) independently:
+OpenCode splits its state across three host directories, and each is mounted (and toggleable) independently:
 
 - `~/.config/opencode` - `opencode.json`, agent definitions, themes. Mounted read/write at `${SANDBOX_HOME}/.config/opencode`; toggle with `opencode.config_passthrough` / `OPENCODE_CONFIG_PASSTHROUGH`; custom host path via `opencode.config_dir` / `OPENCODE_CONFIG_DIR`.
 - `~/.local/share/opencode` - `auth.json` credentials plus session/storage data. Mounted read/write at `${SANDBOX_HOME}/.local/share/opencode`; toggle with `opencode.data_passthrough` / `OPENCODE_DATA_PASSTHROUGH`; custom host path via `opencode.data_dir` / `OPENCODE_DATA_DIR`.
+- `~/.cache/opencode` - installed git plugins (e.g. the `superpowers` plugin npm-installed from a `git+https://...` spec) and other cache. Mounted read/write at `${SANDBOX_HOME}/.cache/opencode`; toggle with `opencode.cache_passthrough` / `OPENCODE_CACHE_PASSTHROUGH`; custom host path via `opencode.cache_dir` / `OPENCODE_CACHE_DIR`. Without this, a git plugin cannot load: the sandbox blocks the fresh `git clone` it would fall back to (the generated gitconfig rewrites `https://github.com/` to `https://prohibited/`).
 
 Because the data directory contains session history, mounting it means sessions started in the sandbox appear on the host (and vice versa). Disable both passthroughs for a clean slate and authenticate with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, which opencode reads from the environment.
 
@@ -252,7 +281,7 @@ The environment override is `SANDBOX_PROXY_ENV_PASSTHROUGH=false`. It follows th
 
 ## Additional mount passthrough
 
-Beyond the well-known tool config directories (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode`), you can mount arbitrary host paths into the sandbox. This is useful for helper tools that keep their own state elsewhere and that the agent must see within its home — for example **CC Switch**, which stores its settings and switched profiles in its own directory (`~/.config/cc-switch`), profile picked by a symlinked `~/.claude.json`:
+Beyond the well-known tool config directories (`~/.claude`, `~/.codex`, `~/.config/opencode`, `~/.local/share/opencode`, `~/.cache/opencode`), you can mount arbitrary host paths into the sandbox. This is useful for helper tools that keep their own state elsewhere and that the agent must see within its home — for example **CC Switch**, which stores its settings and switched profiles in its own directory (`~/.config/cc-switch`), profile picked by a symlinked `~/.claude.json`:
 
 ```yaml
 mounts:
@@ -441,7 +470,7 @@ A warning is printed to stderr when `allow_local_operations: true` is combined w
 
 ## Authentication
 
-Claude Code uses `~/.claude`, `~/.claude.json`, and optionally `ANTHROPIC_API_KEY`. Codex CLI uses `~/.codex` and optionally `OPENAI_API_KEY`. OpenCode uses `~/.local/share/opencode/auth.json` (plus config in `~/.config/opencode`) and optionally `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. Existing config paths are bind-mounted read/write by default, and passthrough can be disabled independently for each profile. API keys are forwarded only when present.
+Claude Code uses `~/.claude`, `~/.claude.json`, and optionally `ANTHROPIC_API_KEY`. Codex CLI uses `~/.codex` and optionally `OPENAI_API_KEY`. OpenCode uses `~/.local/share/opencode/auth.json` (plus config in `~/.config/opencode` and installed plugins in `~/.cache/opencode`) and optionally `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. Existing config paths are bind-mounted read/write by default, and passthrough can be disabled independently for each profile. API keys are forwarded only when present.
 
 ## Git policy
 

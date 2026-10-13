@@ -96,6 +96,21 @@ Both network options are optional. `--port` defaults to `4096`, a stable port fo
 
 The server password is read from the environment, never from stdin, and is forwarded to Docker by name so its value never appears in command arguments (Docker administrators can still inspect a container's environment). OpenCode v1 requires `OPENCODE_SERVER_PASSWORD` and takes an optional `OPENCODE_SERVER_USERNAME`; OpenCode v2 accepts either `OPENCODE_PASSWORD` or `OPENCODE_SERVER_PASSWORD` with the fixed username `opencode`. To connect a phone or browser to a v2 server, pair it: run `opencode pair` (pointed at the server with `--server <url>`) and open the printed one-time link. The all-interface default also listens on any other host IPv4 interface; restrict the port to trusted networks with a host firewall if needed. ZeroTier encrypts traffic between its peers.
 
+## Runtimes
+
+By default (`--runtime docker`) the agent runs in the Docker container described above. `--runtime bwrap` adds a second backend that runs the host's own installed toolchain inside an unprivileged [bubblewrap](https://github.com/containers/bubblewrap) sandbox — no daemon, no root, and no re-download of the tool into an image.
+
+```sh
+asb --runtime bwrap ~/projects/my-app
+asb --runtime bwrap --read-home ~/projects/my-app   # make the whole home readable
+```
+
+The sandbox shows the host system toolchain read-only (`/usr`, `/bin`, ... and common per-user toolchain directories) and the workspace read-write. `$HOME` is a **persistent per-workspace layer** under `~/.local/state/ai-sandbox/runtime/bwrap/<hash>/`: the agent can write there, but the real home is untouched. By default the real home is not readable at all; `--read-home` (or `bwrap.read_home: true`) makes it the read-only lower layer of that layer, so host tools and configs under `$HOME` are visible while writes still never reach it. Built-in and configured secret paths are masked.
+
+`serve`, the cache warm-up, the cleanup container, the per-UID `ai-agent-home` volume, and root-user mode remain Docker-only. Version pins (`CLAUDE_VERSION`, ...) do not apply under `bwrap`; the host CLI is used.
+
+Requires the `bubblewrap` package and unprivileged user namespaces. On Ubuntu 24.04+ the launcher reports an actionable error if AppArmor blocks them (load the `bwrap-userns-restrict` profile or set `kernel.apparmor_restrict_unprivileged_userns=0`). See `docs/configuration.md` for `runtime`, `bwrap.passthrough`, `bwrap.deny`, and `bwrap.read_home`.
+
 ## Browser automation (on the host)
 
 The sandbox can drive a browser that runs on the host, so the user sees and can interact with it. This is a one-time, scripted setup followed by a config flag:
@@ -199,7 +214,10 @@ fpath+=(<prefix>/share/ai-sandbox/completions)
     - [x] **OpenCode version** - pin OpenCode via `OPENCODE_VERSION` or `opencode.version`
     - [ ] Additional built-in coding agents
 - [x] **Rename** - named `ai-sandbox`, with the short alias `asb` and per-tool entrypoints `asb-claude` / `asb-codex` / `asb-opencode` (symlinks; the launcher auto-detects the tool from the invoked name. An explicit `--tool` still wins)
-- [ ] **More runtimes** - support other runtimes than Docker
+- [x] **More runtimes** - Docker (default) plus a host-integrated `bwrap` backend
+    - [x] **bwrap backend** - runs the host's own installed toolchain (no image re-download) inside an unprivileged user-namespace sandbox: a read-only system allowlist, the workspace read-write, and a persistent per-workspace home layer so the real `$HOME` is never modified
+    - [x] **Layered home** - writes under `$HOME` go to a per-workspace layer under the XDG state dir; the whole real home is readable only with `--read-home`
+    - [ ] Network isolation and macOS (Seatbelt) remain future work (see `docs/tradeoffs.md`)
 
 ## TODO
 

@@ -22,6 +22,8 @@ _ai-sandbox() {
         '(-V --version)'{-V,--version}'[Show version]'
         '--tool=[Select the tool]:tool:(claude codex opencode)'
         '--git-preset=[Git policy preset]:preset:(strict daily relaxed)'
+        '--runtime=[Sandbox backend]:backend:(docker bwrap)'
+        '--read-home[Make the whole real home readable (bwrap only)]'
         '--allow-local-git[Block only git push; allow other local git operations]'
     )
     _arguments -s -S $opts \

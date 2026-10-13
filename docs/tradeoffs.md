@@ -121,3 +121,29 @@ Install `playwright`/`chromium` inside the container and run it headless or with
 Launch Chrome on the host with `--remote-debugging-port` and connect from inside over CDP.
 
 **Why not used for the wire-up:** It works and is lighter, but CDP is a low-level protocol; the MCP server adds the accessibility-snapshot tooling agents actually use. CDP remains the fallback if `PLAYWRIGHT_MCP_URL` is used directly from a Playwright script.
+
+---
+
+## Host-integrated namespace backend (`bwrap`) vs OCI container (Docker)
+
+### Docker container (chosen default)
+
+A `node:22-bookworm` image runs the agent with the workspace bind-mounted and the rest of the host unreachable. It is reproducible (the same image for everyone), and its read isolation is structural: anything not mounted is invisible.
+
+**Trade-off:** it re-acquires the entire toolchain inside the image. The selected agent and its dependencies are downloaded (`npx`) into a persistent `ai-agent-home` volume instead of reusing the ones already installed on the host. It also requires a daemon.
+
+### Host-integrated namespace sandbox (chosen as the opt-in second backend)
+
+`--runtime bwrap` runs the host's own installed agent inside an unprivileged bubblewrap user namespace: a read-only system toolchain allowlist, the workspace read-write, and a persistent per-workspace `$HOME` layer, with no daemon, root, or setuid binary.
+
+**Why added:** the user's driver was lightweight, daemonless/rootless execution that reuses the host toolchain instead of re-downloading it. Bubblewrap was selected over nsjail/minijail (coarser filesystem control), firejail (setuid-root attack surface), systemd-nspawn (rootfs/admin oriented), and the OCI/VM runtimes (image/guest based). Landlock and seccomp are complementary but require a compiled helper, which the pure-shell package avoids.
+
+**Trade-offs:**
+- **Read isolation is a policy, not a shell.** Docker hides everything unmounted; bwrap shows a constructed allowlist. The default (`bwrap.read_home: false`) keeps the real home out of the view; `--read-home` deliberately widens reads to the whole home while writes remain in the layer.
+- **User-namespace fragility.** Distributions that restrict unprivileged user namespaces (Ubuntu 24.04+ AppArmor) block `bwrap`. The launcher fails with remediation and never silently falls back to an unsandboxed run.
+- **Shared kernel.** bwrap shares the host kernel; kernel-level escape is out of scope, as it is for Docker without a VM. This matches the existing non-adversarial threat model.
+- **Docker-only features.** `serve`, the warm-up, the cleanup container, the `ai-agent-home` volume, and root mode have no bwrap equivalent in this release.
+
+### macOS (future)
+
+`sandbox-exec`/Seatbelt is the corresponding host-native primitive and is what Claude Code and Codex use on macOS. A Seatbelt backend on the same seam is planned; `sandbox-exec` is deprecated but remains functional and widely used.

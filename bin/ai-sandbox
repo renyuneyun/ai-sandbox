@@ -92,6 +92,12 @@ OPTIONS:
                                    commit --amend; strict blocks them; relaxed
                                    additionally allows branch/tag force-delete,
                                    stash drop, clean, rm.
+  --runtime <docker|bwrap>         Sandbox backend (default: docker). bwrap
+                                   runs the host's own toolchain in a user
+                                   namespace; Docker re-acquires it in an image.
+  --read-home                      bwrap only: make the whole real home
+                                   readable (writes still go to a per-workspace
+                                   layer). Default: off.
   --hostname <ADDRESS|all|lo>      Server bind address (default: all / 0.0.0.0).
   --port <PORT>                     Server port (default: 4096).
   --headless                        API-only server (OpenCode v1 only; no-op for v2).
@@ -471,13 +477,22 @@ configure_tool() {
 
       OPENCODE_CONFIG_PASSTHROUGH="$(resolve OPENCODE_CONFIG_PASSTHROUGH .opencode.config_passthrough true)"
       OPENCODE_DATA_PASSTHROUGH="$(resolve OPENCODE_DATA_PASSTHROUGH .opencode.data_passthrough true)"
+      OPENCODE_CACHE_PASSTHROUGH="$(resolve OPENCODE_CACHE_PASSTHROUGH .opencode.cache_passthrough true)"
       OPENCODE_CONFIG_DIR="$(resolve OPENCODE_CONFIG_DIR .opencode.config_dir "$HOME/.config/opencode")"
       OPENCODE_DATA_DIR="$(resolve OPENCODE_DATA_DIR .opencode.data_dir "$HOME/.local/share/opencode")"
+      OPENCODE_CACHE_DIR="$(resolve OPENCODE_CACHE_DIR .opencode.cache_dir "$HOME/.cache/opencode")"
       if [[ "$OPENCODE_CONFIG_PASSTHROUGH" == "true" && -d "$OPENCODE_CONFIG_DIR" ]]; then
         TOOL_VOLUME_ARGS+=(-v "$OPENCODE_CONFIG_DIR:${SANDBOX_HOME}/.config/opencode")
       fi
       if [[ "$OPENCODE_DATA_PASSTHROUGH" == "true" && -d "$OPENCODE_DATA_DIR" ]]; then
         TOOL_VOLUME_ARGS+=(-v "$OPENCODE_DATA_DIR:${SANDBOX_HOME}/.local/share/opencode")
+      fi
+      # The cache dir holds git-plugins npm-installed from the host (e.g. a
+      # "superpowers@git+https://..." plugin). Expose it so the agent reuses the
+      # already-installed plugin instead of re-cloning it — which the git policy
+      # (GitHub URL rewrite) would otherwise block.
+      if [[ "$OPENCODE_CACHE_PASSTHROUGH" == "true" && -d "$OPENCODE_CACHE_DIR" ]]; then
+        TOOL_VOLUME_ARGS+=(-v "$OPENCODE_CACHE_DIR:${SANDBOX_HOME}/.cache/opencode")
       fi
       [[ -n "${ANTHROPIC_API_KEY:-}" ]] &&
         TOOL_ENV_ARGS+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
@@ -878,10 +893,303 @@ run_docker_agent() {
     npx --yes "$TOOL_PACKAGE" "${TOOL_DEFAULT_ARGS[@]}" "${TOOL_USER_ARGS[@]}"
 }
 
-# Placeholder until the bwrap backend is implemented.
+# Resolve the selected tool to an absolute host path. Prints the path and
+# returns 0, or prints an error and returns 1 when the tool is not installed.
+bwrap_resolve_host_tool() {  # TOOL
+  local tool="$1" path
+  path="$(command -v "$tool" 2>/dev/null)" || true
+  if [[ -z "$path" ]]; then
+    echo "ai-sandbox: '$tool' is not installed on the host; --runtime bwrap runs the host CLI. Install it or use --runtime docker." >&2
+    return 1
+  fi
+  printf '%s' "$path"
+}
+
+# Base sandbox environment. The host environment is cleared so the sandbox sees
+# the same minimal, explicit set the Docker container does.
+bwrap_prepare_env() {
+  BWRAP_BASE_ENV=(
+    --clearenv
+    --setenv HOME "$BWRAP_HOME"
+    --setenv PATH "/run/ai-sandbox/bin:$BWRAP_HOST_PATH"
+    --setenv TERM "${TERM:-dumb}"
+    --setenv SHELL "${SHELL:-/bin/sh}"
+    --setenv USER "$(id -un)"
+    --setenv LOGNAME "$(id -un)"
+    --setenv TMPDIR /tmp
+    --setenv GIT_CONFIG_SYSTEM /run/ai-sandbox/gitconfig
+    --setenv IS_SANDBOX 1
+  )
+  return 0
+}
+
+# Run the selected agent on the host inside a bwrap namespace sandbox.
 run_bwrap_agent() {
-  launcher_error "the bwrap runtime backend is not implemented yet"
-  return 2
+  local tool_path
+  tool_path="$(bwrap_resolve_host_tool "$SELECTED_TOOL")" || { launcher_error "host tool '${SELECTED_TOOL}' not found"; return 2; }
+
+  BWRAP_HOST_PATH="${PATH}"
+  bwrap_prepare_base
+  bwrap_prepare_git
+  # GIT_POLICY_VOLUME_ARGS and BROWSER_VOLUME_ARGS target /etc/ai-sandbox, which
+  # is inside the read-only /etc bind; translate everything else generically and
+  # relocate those two under the writable /run/ai-sandbox.
+  # /etc is already read-only-bound, so /etc/localtime and /etc/timezone are
+  # visible (and read-only) without a dedicated mount; binding over them fails
+  # when the host path is a symlink, so HOST_SETTINGS_VOLUME_ARGS is skipped.
+  bwrap_translate_mounts \
+    "${TOOL_VOLUME_ARGS[@]}" "${GIT_VOLUME_ARGS[@]}" \
+    "${EXTRA_MOUNT_VOLUME_ARGS[@]}"
+  BWRAP_EXTRA_ENV=()
+  if [[ -n "${POLICY_FILE:-}" ]]; then
+    BWRAP_MOUNT_ARGS+=(--ro-bind "$POLICY_FILE" /run/ai-sandbox/git-policy.conf)
+    BWRAP_EXTRA_ENV+=(--setenv GIT_POLICY_FILE /run/ai-sandbox/git-policy.conf)
+  fi
+  if [[ -n "${MCP_CONFIG_FILE:-}" ]]; then
+    BWRAP_MOUNT_ARGS+=(--ro-bind "$MCP_CONFIG_FILE" /run/ai-sandbox/mcp-config.json)
+  fi
+  bwrap_prepare_env
+  bwrap_translate_env \
+    "${TOOL_ENV_ARGS[@]}" "${GIT_ENV_ARGS[@]}" "${GIT_MODE_ENV_ARGS[@]}" \
+    "${PROXY_ENV_ARGS[@]}" "${HOST_SETTINGS_ENV_ARGS[@]}" "${BROWSER_ENV_ARGS[@]}"
+
+  # Rewrite the fixed /etc/ai-sandbox MCP-config path to the relocated one.
+  local -a tool_args=() a
+  for a in "${TOOL_DEFAULT_ARGS[@]}"; do
+    if [[ "$a" == "/etc/ai-sandbox/mcp-config.json" ]]; then
+      tool_args+=("/run/ai-sandbox/mcp-config.json")
+    else
+      tool_args+=("$a")
+    fi
+  done
+
+  bwrap \
+    "${BWRAP_BASE_ARGS[@]}" \
+    "${BWRAP_GIT_ARGS[@]}" \
+    "${BWRAP_MOUNT_ARGS[@]}" \
+    "${BWRAP_BASE_ENV[@]}" \
+    "${BWRAP_TRANSLATED_ENV[@]}" \
+    "${BWRAP_EXTRA_ENV[@]}" \
+    --chdir "$WORKSPACE_DIR" \
+    "$tool_path" "${tool_args[@]}" "${TOOL_USER_ARGS[@]}"
+}
+
+# Probe whether the bwrap backend can run on this host. Returns 0 and prints
+# nothing on success; otherwise returns 1 with an actionable message on stderr.
+# The probe actually creates a minimal sandbox so a present-but-unusable bwrap
+# (e.g. unprivileged user namespaces blocked by AppArmor) is detected.
+bwrap_available() {
+  if ! command -v bwrap >/dev/null 2>&1; then
+    echo "ai-sandbox: bwrap not found on PATH; install the 'bubblewrap' package or use --runtime docker" >&2
+    return 1
+  fi
+  if ! bwrap --ro-bind / / --proc /proc --dev /dev --unshare-all --share-net -- /bin/true >/dev/null 2>&1; then
+    echo "ai-sandbox: bwrap cannot create a sandbox on this host (unprivileged user namespaces are unavailable)." >&2
+    echo "ai-sandbox: on Ubuntu 24.04+ load the AppArmor profile (e.g. /etc/apparmor.d/bwrap-userns-restrict) or set" >&2
+    echo "ai-sandbox:   kernel.apparmor_restrict_unprivileged_userns=0, or use --runtime docker." >&2
+    return 1
+  fi
+  return 0
+}
+
+# Rewrite a container-side path so a mount that targeted the Docker sandbox home
+# lands on the real host home under bwrap (they are usually equal; they differ
+# only when sandbox.home is customized).
+bwrap_rewrite_cont_path() {  # PATH
+  local p="$1" home="${BWRAP_HOME:-$HOME}"
+  case "$p" in
+    "$SANDBOX_HOME")   printf '%s' "$home" ;;
+    "$SANDBOX_HOME"/*) printf '%s/%s' "$home" "${p#"$SANDBOX_HOME"/}" ;;
+    *)                 printf '%s' "$p" ;;
+  esac
+}
+
+# Translate the launcher's -v specification arrays into bwrap bind arguments.
+# Each "-v HOST:CONT[:FLAGS]" becomes "--ro-bind HOST CONT" (default/ro) or
+# "--bind HOST CONT" (rw). Paths are assumed colon-free, matching
+# configure_extra_mounts. Results populate the global BWRAP_MOUNT_ARGS.
+bwrap_translate_mounts() {
+  BWRAP_MOUNT_ARGS=()
+  local a spec host cont rest flags
+  while (($#)); do
+    a="$1"
+    if [[ "$a" == "-v" ]]; then
+      shift
+      spec="$1"
+      host="${spec%%:*}"
+      rest="${spec#*:}"
+      if [[ "$rest" == *:* ]]; then
+        cont="${rest%%:*}"
+        flags="${rest#*:}"
+      elif [[ "$rest" == "ro" || "$rest" == "rw" ]]; then
+        # Single-token flag form: container path equals the host path.
+        cont="$host"
+        flags="$rest"
+      else
+        cont="$rest"
+        flags=""
+      fi
+      cont="$(bwrap_rewrite_cont_path "$cont")"
+      # A bare -v has no flag; Docker mounts a bare -v read-write, so the
+      # renderer must too. Explicit :ro stays read-only.
+      if [[ "$flags" == "ro" ]]; then
+        BWRAP_MOUNT_ARGS+=(--ro-bind "$host" "$cont")
+      else
+        BWRAP_MOUNT_ARGS+=(--bind "$host" "$cont")
+      fi
+    fi
+    shift
+  done
+  return 0
+}
+
+# Translate the launcher's -e specification arrays into bwrap --setenv pairs.
+# Splits on the FIRST '=' so values may contain '='. Populates BWRAP_TRANSLATED_ENV.
+bwrap_translate_env() {
+  BWRAP_TRANSLATED_ENV=()
+  local a kv k v
+  while (($#)); do
+    a="$1"
+    if [[ "$a" == "-e" ]]; then
+      shift
+      kv="$1"
+      k="${kv%%=*}"
+      v="${kv#*=}"
+      BWRAP_TRANSLATED_ENV+=(--setenv "$k" "$v")
+    fi
+    shift
+  done
+  return 0
+}
+
+# The persistent per-workspace home layer directory. Stable for a workspace so
+# writes persist across runs; derived from a hash of the canonical workspace path.
+bwrap_home_layer_path() {
+  local hash
+  hash="$(printf '%s' "$WORKSPACE_DIR" | git hash-object --stdin 2>/dev/null)" || hash=""
+  [[ -n "$hash" ]] || hash="$(printf '%s' "$WORKSPACE_DIR" | md5sum | cut -d' ' -f1)"
+  printf '%s/ai-sandbox/runtime/bwrap/%s/home' "${XDG_STATE_HOME:-$HOME/.local/state}" "${hash:0:12}"
+}
+
+# Assemble the bwrap-specific base arguments: namespaces, the read-only system
+# allowlist, the layered $HOME, the per-user toolchain allowlist, the secret deny
+# list, and the runtime directories. Later binds win, so the home layer precedes
+# the per-user/tool-config binds that must land inside it. Populates
+# BWRAP_BASE_ARGS and BWRAP_LAYER_DIR / BWRAP_WORK_DIR.
+bwrap_prepare_base() {
+  # NOTE: no --new-session here. setsid() would detach the sandbox from the
+  # terminal's controlling session/foreground process group, so the agent would
+  # never receive SIGWINCH (terminal resize) or SIGINT (Ctrl-C). Keep it in the
+  # caller's session so an interactive TUI behaves like a normal foreground job.
+  # --die-with-parent still reaps the agent when the launcher is killed.
+  BWRAP_BASE_ARGS=(--unshare-all --share-net --die-with-parent)
+  BWRAP_LAYER_DIR="$(bwrap_home_layer_path)"
+  BWRAP_WORK_DIR="$(dirname "$BWRAP_LAYER_DIR")/work"
+  BWRAP_HOME="${BWRAP_HOME:-$HOME}"
+
+  # A writable directory in the sandbox's tmpfs root for generated files
+  # (git wrapper, system gitconfig, git policy, MCP config) that must not be
+  # written into the read-only system binds.
+  BWRAP_BASE_ARGS+=(--dir /run/ai-sandbox)
+
+  # 1. System toolchain, read-only.
+  local d
+  for d in /usr /bin /sbin /lib /lib64 /lib32 /etc /opt /nix; do
+    [[ -e "$d" ]] && BWRAP_BASE_ARGS+=(--ro-bind "$d" "$d")
+  done
+
+  # 1b. DNS. On systemd-resolved hosts /etc/resolv.conf is a symlink into
+  # /run/systemd/resolve, and binding /etc alone leaves that symlink dangling,
+  # so the agent cannot resolve hostnames (getaddrinfo ETIMEOUT). Bind the
+  # resolved target read-only too; --share-net keeps 127.0.0.53 reachable.
+  local resolv_real
+  resolv_real="$(readlink -f /etc/resolv.conf 2>/dev/null)" || resolv_real=""
+  if [[ -n "$resolv_real" && -f "$resolv_real" && "$resolv_real" != "/etc/resolv.conf" ]]; then
+    BWRAP_BASE_ARGS+=(--ro-bind "$resolv_real" "$resolv_real")
+  fi
+
+  # 2. Runtime directories.
+  BWRAP_BASE_ARGS+=(--proc /proc --dev /dev --tmpfs /tmp --dir /tmp)
+
+  # 3. Home: a persistent per-workspace layer (writes never touch the real home).
+  mkdir -p "$BWRAP_LAYER_DIR" "$BWRAP_WORK_DIR"
+  if [[ "$READ_HOME" == "true" ]]; then
+    BWRAP_BASE_ARGS+=(--overlay-src "$HOME" --overlay "$BWRAP_LAYER_DIR" "$BWRAP_WORK_DIR" "$HOME")
+  else
+    BWRAP_BASE_ARGS+=(--bind "$BWRAP_LAYER_DIR" "$HOME")
+  fi
+
+  # 4. Per-user toolchain, read-only, applied after the home layer. Only the
+  # toolchain parts of ~/.local are exposed: ~/.local/state (the default
+  # XDG_STATE_HOME) and ~/.local/share stay on the writable home layer so agents
+  # can create their own state/locks there instead of hitting a read-only bind.
+  local rel
+  for rel in .nvm .volta .asdf .fnm .bun .cargo .rustup .deno .local/bin; do
+    [[ -e "$HOME/$rel" ]] && BWRAP_BASE_ARGS+=(--ro-bind "$HOME/$rel" "$HOME/$rel")
+  done
+
+  # 5. The workspace, read-write (the primary writable tree).
+  [[ -d "$WORKSPACE_DIR" ]] && BWRAP_BASE_ARGS+=(--bind "$WORKSPACE_DIR" "$WORKSPACE_DIR")
+
+  # 4b. User-configured passthrough allowlist (HOST or HOST:rw), added read-only
+  # by default, applied after the home layer so entries inside $HOME win.
+  local spec phost pflags
+  while IFS= read -r spec; do
+    [[ -n "$spec" ]] || continue
+    phost="${spec%%:*}"
+    pflags=""
+    [[ "$spec" == *:* ]] && pflags="${spec#*:}"
+    [[ -e "$phost" ]] || continue
+    if [[ "$pflags" == "rw" ]]; then
+      BWRAP_BASE_ARGS+=(--bind "$phost" "$phost")
+    else
+      BWRAP_BASE_ARGS+=(--ro-bind "$phost" "$phost")
+    fi
+  done <<< "${SANDBOX_BWRAP_PASSTHROUGH:-}"
+
+  # 5. Secret deny list (only meaningful when the real home is visible).
+  # Directories are masked with an empty tmpfs; files with /dev/null.
+  if [[ "$READ_HOME" == "true" ]]; then
+    local deny
+    while IFS= read -r deny; do
+      if [[ -d "$deny" ]]; then
+        BWRAP_BASE_ARGS+=(--tmpfs "$deny")
+      elif [[ -e "$deny" ]]; then
+        BWRAP_BASE_ARGS+=(--ro-bind /dev/null "$deny")
+      fi
+    done <<< "${SANDBOX_BWRAP_DENY:-}"
+    for deny in "$HOME/.ssh" "$HOME/.aws" "$HOME/.gnupg" "$HOME/.config/gh" "$HOME/.netrc" "$HOME/.docker"; do
+      case "${SANDBOX_BWRAP_DENY:-}" in *"$deny"*) continue ;; esac
+      if [[ -d "$deny" ]]; then
+        BWRAP_BASE_ARGS+=(--tmpfs "$deny")
+      elif [[ -e "$deny" ]]; then
+        BWRAP_BASE_ARGS+=(--ro-bind /dev/null "$deny")
+      fi
+    done
+  fi
+  return 0
+}
+
+# Rebind the existing git wrapper over the host git inside the namespace and
+# generate a read-only system gitconfig that blocks SSH pushes and rewrites
+# GitHub URLs (the bwrap analogue of the Docker entrypoint's /usr/bin/git
+# config --system). Populates BWRAP_GIT_ARGS and BWRAP_GITCONFIG.
+bwrap_prepare_git() {
+  BWRAP_GIT_ARGS=(
+    --dir /run/ai-sandbox/bin
+    --ro-bind "$SANDBOX_COMPOSE_DIR/git-wrapper" /run/ai-sandbox/bin/git
+  )
+  BWRAP_GITCONFIG="$(mktemp)"
+  cat > "$BWRAP_GITCONFIG" <<'EOF'
+[core]
+	sshCommand = echo "[SECURITY] Remote push operations are prohibited inside this sandbox." && false
+[url "https://prohibited/"]
+	insteadOf = https://github.com/
+[url "https://prohibited/"]
+	insteadOf = git@github.com:
+EOF
+  BWRAP_GIT_ARGS+=(--ro-bind "$BWRAP_GITCONFIG" /run/ai-sandbox/gitconfig)
+  return 0
 }
 
 # --- Main execution (only runs when executed, not sourced) ---
@@ -949,9 +1257,10 @@ SANDBOX_PROGRESS="$(resolve SANDBOX_PROGRESS .progress.enabled true)"
 # exit status when nothing needs cleaning.
 POLICY_FILE=""
 MCP_CONFIG_FILE=""
+BWRAP_GITCONFIG=""
 SERVE_STARTED=false
 SERVE_STATE_DIR=""
-trap 'progress_stop; if [[ "$SERVE_STARTED" != true ]]; then if [[ -n "$POLICY_FILE" ]]; then rm -f -- "$POLICY_FILE"; fi; if [[ -n "$MCP_CONFIG_FILE" ]]; then rm -f -- "$MCP_CONFIG_FILE"; fi; if [[ -n "$SERVE_STATE_DIR" ]]; then rmdir -- "$SERVE_STATE_DIR" 2>/dev/null || true; fi; fi' EXIT
+trap 'progress_stop; if [[ "$SERVE_STARTED" != true ]]; then if [[ -n "$POLICY_FILE" ]]; then rm -f -- "$POLICY_FILE"; fi; if [[ -n "$MCP_CONFIG_FILE" ]]; then rm -f -- "$MCP_CONFIG_FILE"; fi; if [[ -n "${BWRAP_GITCONFIG:-}" ]]; then rm -f -- "$BWRAP_GITCONFIG"; fi; if [[ -n "$SERVE_STATE_DIR" ]]; then rmdir -- "$SERVE_STATE_DIR" 2>/dev/null || true; fi; fi' EXIT
 
 progress_start "Preparing sandbox"
 
@@ -1327,6 +1636,18 @@ fi
 # Run the selected coding agent.
 #   docker: a one-shot container; the named ai-agent-home volume persists across runs.
 #   bwrap:  the host-installed tool in an unprivileged namespace sandbox.
+if [[ "$RUNTIME" == bwrap ]]; then
+  bwrap_available || exit 2
+  SANDBOX_BWRAP_PASSTHROUGH="$(resolve_list SANDBOX_BWRAP_PASSTHROUGH .bwrap.passthrough)"
+  SANDBOX_BWRAP_DENY="$(resolve_list SANDBOX_BWRAP_DENY .bwrap.deny)"
+  case "$SELECTED_TOOL" in
+    claude)   [[ -n "${CLAUDE_VERSION:-}${CLI_TOOL_VERSION:-}" ]] && warn_msg "version pins are ignored under --runtime bwrap; the host $SELECTED_TOOL is used." ;;
+    codex)    [[ -n "${CODEX_VERSION:-}${CLI_TOOL_VERSION:-}" ]] && warn_msg "version pins are ignored under --runtime bwrap; the host $SELECTED_TOOL is used." ;;
+    opencode) [[ -n "${OPENCODE_VERSION:-}${CLI_TOOL_VERSION:-}" ]] && warn_msg "version pins are ignored under --runtime bwrap; the host $SELECTED_TOOL is used." ;;
+  esac
+  progress_stop
+  echo "ai-sandbox: launching $SELECTED_TOOL on the host (bwrap)..." >&2
+fi
 case "$RUNTIME" in
   docker) run_docker_agent ;;
   bwrap)  run_bwrap_agent ;;

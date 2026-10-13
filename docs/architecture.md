@@ -17,6 +17,29 @@ Claude receives `--dangerously-skip-permissions`; Codex receives `--dangerously-
 
 Multiple sessions can run in parallel. Per-user project naming (`ai-sandbox-${SANDBOX_UID}`) isolates different host UIDs; Claude and Codex sessions for one UID share the same `ai-agent-home` named volume. An OpenCode server is named by UID and workspace path. Generated policy and MCP mount files for a detached server remain in the user's state directory until `serve stop` removes them.
 
+## Runtime backends
+
+The launcher builds one set of mount (`-v HOST:CONT[:FLAGS]`) and environment (`-e NAME=VALUE`) specification arrays and dispatches the interactive run to a backend:
+
+- **docker** (default): the arrays become the `docker compose run` invocation described above. Unchanged.
+- **bwrap**: a host-integrated backend. The specification arrays are translated into `bwrap` bind/setenv flags, and additional bwrap-only mounts are prepared: `--unshare-all --share-net` namespaces, a read-only system allowlist (`/usr`, `/bin`, `/etc`, ...), `--proc`, `--dev`, a tmpfs `/tmp`, the workspace read-write, and a persistent per-workspace `$HOME` layer. The selected agent runs from the host's own installation (no image, no `npx` download). Generated files that must not be written into the read-only system binds (the git wrapper at `/run/ai-sandbox/bin/git`, a system gitconfig at `/run/ai-sandbox/gitconfig`, the git policy file, and the browser MCP config) live under the writable `/run/ai-sandbox`, with `PATH`, `GIT_CONFIG_SYSTEM`, and `GIT_POLICY_FILE` pointing at them. The host `/etc/localtime` and `/etc/timezone` need no dedicated mount (the `/etc` bind is already read-only). `IS_SANDBOX=1` is set.
+
+`serve`, the cache warm-up, the cleanup container, the per-UID `ai-agent-home` volume, and root-user mode are docker-only. Version pins do not apply under bwrap.
+
+### bwrap filesystem model
+
+Binds are applied in order (later wins):
+
+1. System toolchain read-only.
+2. `$HOME` bound to the persistent per-workspace layer (writes never touch the real home).
+3. Per-user toolchain directories (`.nvm`, `.cargo`, ...) and configured `bwrap.passthrough` paths read-only (or `:rw`).
+4. Tool-config passthrough directories read-write (the same arrays the Docker backend mounts).
+5. The workspace read-write.
+6. `mounts.extra` / auto-detected mounts.
+7. Secret `bwrap.deny` paths shadowed (read-home mode only).
+
+With `--read-home`, step 2 is an overlayfs whose lower layer is the real home and whose upper is the same layer, so the real home is readable but writes still land in the layer. The home layer lives under `${XDG_STATE_HOME:-~/.local/state}/ai-sandbox/runtime/bwrap/<hash>/home`.
+
 ## Network isolation
 
 **Current status: no network isolation.** The container uses `network_mode: host`, meaning it shares the host's network namespace. This was chosen for simplicity and allows the container to reach host-local services such as a proxy at `127.0.0.1:1080`.

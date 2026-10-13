@@ -16,6 +16,28 @@
 # Default: claude.
 # tool: opencode
 
+# Sandbox backend. docker (default) runs the agent in an image container and
+# re-acquires its toolchain; bwrap runs the host's own toolchain in an
+# unprivileged user-namespace sandbox, with writes confined to the workspace and
+# a persistent per-workspace home layer. Supported: docker, bwrap.
+# Env override: SANDBOX_RUNTIME. CLI: --runtime.
+# runtime: docker
+
+bwrap:
+  # Extra host paths to make visible inside the sandbox, read-only by default.
+  # Entries are HOST or HOST:rw; they are ADDED to the built-in system and
+  # per-user toolchain allowlist. Env override: SANDBOX_BWRAP_PASSTHROUGH.
+  # passthrough: []
+  # Extra host paths to shadow with an empty view (secrets, credentials),
+  # ADDED to the built-in deny list. Only meaningful with read_home: true.
+  # Env override: SANDBOX_BWRAP_DENY.
+  # deny: []
+  # Whether the ENTIRE real home is readable. When false (default) host home
+  # content is visible only through the toolchain allowlist and passthrough.
+  # When true the real home is the read-only lower layer of the writable
+  # per-workspace layer. CLI: --read-home. Env override: SANDBOX_BWRAP_READ_HOME.
+  # read_home: false
+
 claude:
   # Claude Code version to run inside the container.
   # Default: host's claude version (from `claude --version`).
@@ -67,11 +89,18 @@ opencode:
   # for authentication without host auth. Default: true.
   # data_passthrough: true
 
-  # Custom host paths mounted at ${SANDBOX_HOME}/.config/opencode and
-  # ${SANDBOX_HOME}/.local/share/opencode respectively.
-  # Default: ~/.config/opencode and ~/.local/share/opencode.
+  # When false, host ~/.cache/opencode (installed git plugins, e.g. the
+  # superpowers plugin) is not mounted. Without it the agent re-clones the
+  # plugin, which the git policy (GitHub URL rewrite) blocks. Default: true.
+  # cache_passthrough: true
+
+  # Custom host paths mounted at ${SANDBOX_HOME}/.config/opencode,
+  # ${SANDBOX_HOME}/.local/share/opencode and ${SANDBOX_HOME}/.cache/opencode
+  # respectively.
+  # Default: ~/.config/opencode, ~/.local/share/opencode and ~/.cache/opencode.
   # config_dir: /path/to/custom/.config/opencode
   # data_dir: /path/to/custom/.local/share/opencode
+  # cache_dir: /path/to/custom/.cache/opencode
 
 proxy:
   # Forward non-empty HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and

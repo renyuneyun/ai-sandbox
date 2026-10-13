@@ -25,6 +25,10 @@ _ai_sandbox() {
             COMPREPLY=($(compgen -W "strict daily relaxed" -- "$cur"))
             return 0
             ;;
+        --runtime)
+            COMPREPLY=($(compgen -W "docker bwrap" -- "$cur"))
+            return 0
+            ;;
         serve)
             COMPREPLY=($(compgen -W "start stop attach" -- "$cur"))
             return 0
@@ -48,7 +52,7 @@ _ai_sandbox() {
     fi
 
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "--help -h --version -V --tool --git-preset --allow-local-git --" -- "$cur"))
+        COMPREPLY=($(compgen -W "--help -h --version -V --tool --git-preset --allow-local-git --runtime --read-home --" -- "$cur"))
         return 0
     fi
 
