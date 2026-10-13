@@ -264,6 +264,29 @@ help_out=$(DOCKER_CAPTURE="$HELP_DIR/called" HOME="$HELP_DIR/home" PATH="$HELP_D
   ok "help: --help prints usage, exits 0, skips docker" ||
   bad "help: --help prints usage, exits 0, skips docker (code=$help_code)"
 
+# Subcommand -h/--help must print usage, exit 0, and never reach docker, both
+# before and after the action word.
+SUBHELP_DIR="$(mktemp -d)"
+PROFILE_TMP_DIRS+=("$SUBHELP_DIR")
+mkdir -p "$SUBHELP_DIR/bin" "$SUBHELP_DIR/home"
+printf '#!/bin/sh\n: > "$DOCKER_CAPTURE"\n' > "$SUBHELP_DIR/bin/docker"
+chmod +x "$SUBHELP_DIR/bin/docker"
+for subhelp_args in "serve --help" "serve attach -h" "openchamber --help" "openchamber start --help" "openchamber stop -h"; do
+    rm -f "$SUBHELP_DIR/called"
+    subhelp_code=0
+    subhelp_out=$(DOCKER_CAPTURE="$SUBHELP_DIR/called" HOME="$SUBHELP_DIR/home" PATH="$SUBHELP_DIR/bin:$PATH" bash "$LAUNCHER" $subhelp_args 2>&1) || subhelp_code=$?
+    [[ $subhelp_code -eq 0 && "$subhelp_out" == *"USAGE:"* && ! -e "$SUBHELP_DIR/called" ]] &&
+      ok "help: '$subhelp_args' prints usage, exits 0, skips docker" ||
+      bad "help: '$subhelp_args' prints usage, exits 0, skips docker (code=$subhelp_code)"
+done
+
+# A bogus subcommand action still errors instead of printing help.
+bogus_code=0
+bogus_out=$(DOCKER_CAPTURE="$SUBHELP_DIR/called" HOME="$SUBHELP_DIR/home" PATH="$SUBHELP_DIR/bin:$PATH" bash "$LAUNCHER" openchamber bogus 2>&1) || bogus_code=$?
+[[ $bogus_code -ne 0 && "$bogus_out" == *"openchamber requires start or stop"* ]] &&
+  ok "help: a bogus openchamber action still errors" ||
+  bad "help: a bogus openchamber action still errors (code=$bogus_code, out=$bogus_out)"
+
 # --- resolve_allow_local tests ---
 # Follows the resolve_tool pattern: CLI value wins, else resolve() from env/config/default.
 
@@ -1662,6 +1685,20 @@ if [[ -s "$COMPLETION_FILE" ]]; then
         [[ "$COMPLETION_JOINED" == *"--ui-port"* && "$COMPLETION_JOINED" == *"--ui-host"* ]] &&
           ok "completion: openchamber UI options included" ||
           bad "completion: openchamber UI options included ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" "serve" "start" "--"); COMP_CWORD=3
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *"--help"* ]] &&
+          ok "completion: serve offers --help" ||
+          bad "completion: serve offers --help ($COMPLETION_JOINED)"
+
+        COMP_WORDS=("ai-sandbox" "openchamber" "start" "--"); COMP_CWORD=3
+        _ai_sandbox
+        COMPLETION_JOINED="$(printf '%s' "${COMPREPLY[@]}")"
+        [[ "$COMPLETION_JOINED" == *"--help"* ]] &&
+          ok "completion: openchamber offers --help" ||
+          bad "completion: openchamber offers --help ($COMPLETION_JOINED)"
 
         COMP_WORDS=("ai-sandbox" ""); COMP_CWORD=1
         _ai_sandbox

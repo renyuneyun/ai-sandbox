@@ -48,7 +48,7 @@ _ai_sandbox() {
 
     if [[ "${COMP_WORDS[1]:-}" == serve ]]; then
         if [[ "$cur" == -* ]]; then
-            COMPREPLY=($(compgen -W "--tool --git-preset --hostname --port --headless --allow-local-git" -- "$cur"))
+            COMPREPLY=($(compgen -W "-h --help --tool --git-preset --hostname --port --headless --allow-local-git" -- "$cur"))
         else
             COMPREPLY=($(compgen -d -- "$cur"))
         fi
@@ -57,7 +57,7 @@ _ai_sandbox() {
 
     if [[ "${COMP_WORDS[1]:-}" == openchamber ]]; then
         if [[ "$cur" == -* ]]; then
-            COMPREPLY=($(compgen -W "--tool --git-preset --hostname --port --ui-port --ui-host --keep-server --allow-local-git" -- "$cur"))
+            COMPREPLY=($(compgen -W "-h --help --tool --git-preset --hostname --port --ui-port --ui-host --keep-server --allow-local-git" -- "$cur"))
         else
             COMPREPLY=($(compgen -d -- "$cur"))
         fi

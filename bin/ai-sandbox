@@ -253,6 +253,7 @@ parse_launcher_args() {
   CLI_GIT_PRESET=""
   CLI_RUNTIME=""
   CLI_READ_HOME=""
+  CLI_HELP=false
   SERVE_ACTION=""
   SERVE_HOSTNAME="0.0.0.0"
   SERVE_PORT="4096"
@@ -287,6 +288,9 @@ parse_launcher_args() {
 
   if [[ "${1:-}" == serve ]]; then
     shift
+    case "${1:-}" in
+      -h|--help) CLI_HELP=true; return 0 ;;
+    esac
     SERVE_ACTION="${1:-}"
     case "$SERVE_ACTION" in
       start|stop|attach) shift ;;
@@ -294,6 +298,9 @@ parse_launcher_args() {
     esac
   elif [[ "${1:-}" == openchamber ]]; then
     shift
+    case "${1:-}" in
+      -h|--help) CLI_HELP=true; return 0 ;;
+    esac
     OPENCHAMBER_ACTION="${1:-}"
     case "$OPENCHAMBER_ACTION" in
       start) SERVE_ACTION=start ;;
@@ -305,6 +312,10 @@ parse_launcher_args() {
 
   while (($#)); do
     case "$1" in
+      -h|--help)
+        CLI_HELP=true
+        return 0
+        ;;
       --)
         [[ -z "$SERVE_ACTION" ]] || { launcher_error "serve does not accept tool arguments"; return; }
         shift
@@ -1665,6 +1676,10 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 parse_launcher_args "$@"
+if [[ "${CLI_HELP:-false}" == true ]]; then
+  print_help
+  exit 0
+fi
 # Apply the entrypoint default only when no --tool was given.
 [[ -z "$CLI_TOOL" && -n "$ENTRYPOINT_TOOL" ]] && CLI_TOOL="$ENTRYPOINT_TOOL"
 [[ -n "$SERVE_ACTION" && -z "$CLI_TOOL" ]] && CLI_TOOL=opencode

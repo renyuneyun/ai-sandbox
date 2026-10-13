@@ -7,6 +7,7 @@ _ai-sandbox() {
     if [[ "${words[2]:-}" == serve ]]; then
         _arguments -s -S \
             '2:action:(start stop attach)' \
+            '(-h --help)'{-h,--help}'[Show help]' \
             '--tool=[Select the tool]:tool:(opencode)' \
             '--git-preset=[Git policy preset]:preset:(strict daily relaxed)' \
             '--hostname=[Server listen address]:address:(all lo)' \
@@ -19,6 +20,7 @@ _ai-sandbox() {
     if [[ "${words[2]:-}" == openchamber ]]; then
         _arguments -s -S \
             '2:action:(start stop)' \
+            '(-h --help)'{-h,--help}'[Show help]' \
             '--tool=[Select the tool]:tool:(opencode)' \
             '--git-preset=[Git policy preset]:preset:(strict daily relaxed)' \
             '--hostname=[Server listen address]:address:(all lo)' \
