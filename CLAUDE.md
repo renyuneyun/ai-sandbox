@@ -16,4 +16,5 @@ This is a Docker-sandboxed coding-agent launcher with first-class Claude Code an
 
 - Keep `README.md` and the docs under `docs/` up to date whenever you change behaviour, CLI interface, volumes, config/env knobs, or install paths.
 - Follow the "Keeping docs in sync" checklist in `docs/development.md` for any change, including auditing docs for drift from older commits — do not leave it for the user to re-check manually.
+- Commit in coherent reviewable units, not per step of the work. A feature, its tests, and its docs may each be their own commit (or be bundled) — whichever is sensible and keeps the count small. Fold later edits or review fixes into the commit they belong to (`git commit --amend`, or `--fixup` + `rebase --autosquash`). See "Commit granularity" in `docs/development.md`.
 - Do not break the invariants listed in `docs/development.md`.

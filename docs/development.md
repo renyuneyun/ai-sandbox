@@ -64,6 +64,34 @@ Any change to behavior, the CLI, volumes, config/env knobs, or the install layou
 - If an older commit shipped a feature without its doc update, fold that doc fix into this change rather than leaving it.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` are historical planning artifacts (they may reference old names like `bin/claude-sandboxed`, `CLAUDE_VOLUME_ARGS`) and are intentionally **not** kept in sync — do not "fix" them as part of the audit.
 
+## Commit granularity
+
+A commit should be a coherent, reviewable **unit of work** — a feature, its
+tests, its docs, a refactor — not a step of the process. How you split those
+units is a judgment call: one commit carrying the feature, its tests, and its
+docs is fine; so is a small set of separate commits (feature / tests / docs).
+What matters is that each commit stands on its own and the total stays small.
+
+- **Don't commit the editing trail.** Write the failing test, watch it fail,
+  implement, watch it pass — but do not leave a commit per step or per tiny fix.
+  While working, fold follow-up edits into the commit that owns the change with
+  `git commit --amend`, or `git commit --fixup <sha>` + `git rebase --autosquash`.
+- **No trailing `fix:`/`wip:` commits** for something already committed on the
+  branch — amend it into its commit instead.
+- **Splitting feature / tests / docs into separate commits is fine** when each is
+  substantial enough to review on its own. Docs still land in the same piece of
+  work (branch/PR) as the behavior, per "Keeping docs in sync" above — they do
+  not have to share a commit.
+- **Planning artifacts** (`docs/superpowers/`) stay their own `docs:` commit.
+- **A separate commit is warranted when a reviewer could accept one and reject
+  the other** — e.g. a mechanical seam refactor that lands before the feature
+  built on it.
+- **Expect a handful of commits per feature, not a dozen — and not one
+  mega-commit mixing unrelated changes either.**
+
+The measure is what the history looks like to a reviewer or `git bisect`: a few
+logical commits, not a transcript of the editing session.
+
 ## Config resolution
 
 Identity, git, proxy, cleanup, policy, browser, mounts, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
