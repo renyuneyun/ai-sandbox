@@ -118,7 +118,7 @@ sandbox:
 
 ## Runtime
 
-`runtime` selects the sandbox backend. `docker` (default) runs the agent in the image container; `bwrap` runs the host's own toolchain inside an unprivileged bubblewrap user-namespace sandbox.
+`runtime` selects the sandbox backend. `docker` (default) runs the agent in the image container; `bwrap` runs the host's own toolchain inside an unprivileged bubblewrap user-namespace sandbox. It applies to interactive runs and to `serve`/`openchamber`.
 
 Precedence: `--runtime` > `SANDBOX_RUNTIME` > workspace `runtime` > user `runtime` > `docker`. An unknown value fails before anything runs.
 
@@ -134,7 +134,7 @@ asb --runtime bwrap
 | `bwrap.deny` | `SANDBOX_BWRAP_DENY` (newline list) | empty | Extra host paths to shadow with an empty view. Added to the built-in secret list; only meaningful with `read_home`. |
 | `bwrap.read_home` | `SANDBOX_BWRAP_READ_HOME` | `false` | Whether the entire real home is readable. CLI: `--read-home`. |
 
-Under `bwrap`, `$HOME` is a persistent per-workspace layer under `${XDG_STATE_HOME:-~/.local/state}/ai-sandbox/runtime/bwrap/<hash>/home`; writes there never touch the real home. With `read_home: true` the real home becomes the read-only lower layer of that overlay, so it is readable but still not writable. The `sandbox.uid/gid/username/home` identity knobs and version pins do not apply to `bwrap` (the host user and host CLI are used). Generated files that the Docker backend puts at `/usr/local/bin/git`, `/etc/gitconfig`, and `/etc/ai-sandbox/*` are instead placed under the writable `/run/ai-sandbox` inside the namespace (with `PATH`, `GIT_CONFIG_SYSTEM`, and `GIT_POLICY_FILE` pointing at them). `serve` supports only `docker` in this release.
+Under `bwrap`, `$HOME` is a persistent per-workspace layer under `${XDG_STATE_HOME:-~/.local/state}/ai-sandbox/runtime/bwrap/<hash>/home`; writes there never touch the real home. With `read_home: true` the real home becomes the read-only lower layer of that overlay, so it is readable but still not writable. The `sandbox.uid/gid/username/home` identity knobs and version pins do not apply to `bwrap` (the host user and host CLI are used). Generated files that the Docker backend puts at `/usr/local/bin/git`, `/etc/gitconfig`, and `/etc/ai-sandbox/*` are instead placed under the writable `/run/ai-sandbox` inside the namespace (with `PATH`, `GIT_CONFIG_SYSTEM`, and `GIT_POLICY_FILE` pointing at them). `serve` and `openchamber` support both backends; under `bwrap` the detached server runs the host OpenCode (version pins ignored) and is stopped by a process-group signal (see the "Serve and OpenChamber under bwrap" section in `docs/architecture.md`).
 
 ## User identity
 

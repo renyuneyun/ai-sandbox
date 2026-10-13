@@ -24,7 +24,7 @@ The launcher builds one set of mount (`-v HOST:CONT[:FLAGS]`) and environment (`
 - **docker** (default): the arrays become the `docker compose run` invocation described above. Unchanged.
 - **bwrap**: a host-integrated backend. The specification arrays are translated into `bwrap` bind/setenv flags, and additional bwrap-only mounts are prepared: `--unshare-all --share-net` namespaces, a read-only system allowlist (`/usr`, `/bin`, `/etc`, ...), `--proc`, `--dev`, a tmpfs `/tmp`, the workspace read-write, and a persistent per-workspace `$HOME` layer. The selected agent runs from the host's own installation (no image, no `npx` download). Generated files that must not be written into the read-only system binds (the git wrapper at `/run/ai-sandbox/bin/git`, a system gitconfig at `/run/ai-sandbox/gitconfig`, the git policy file, and the browser MCP config) live under the writable `/run/ai-sandbox`, with `PATH`, `GIT_CONFIG_SYSTEM`, and `GIT_POLICY_FILE` pointing at them. The host `/etc/localtime` and `/etc/timezone` need no dedicated mount (the `/etc` bind is already read-only). `IS_SANDBOX=1` is set.
 
-`serve`, the cache warm-up, the cleanup container, the per-UID `ai-agent-home` volume, and root-user mode are docker-only. Version pins do not apply under bwrap.
+The cache warm-up, the cleanup container, the per-UID `ai-agent-home` volume, and root-user mode are docker-only. Version pins do not apply under bwrap. `serve` and `openchamber` work under both backends — see "Serve and OpenChamber under bwrap".
 
 ### bwrap filesystem model
 
@@ -39,6 +39,17 @@ Binds are applied in order (later wins):
 7. Secret `bwrap.deny` paths shadowed (read-home mode only).
 
 With `--read-home`, step 2 is an overlayfs whose lower layer is the real home and whose upper is the same layer, so the real home is readable but writes still land in the layer. The home layer lives under `${XDG_STATE_HOME:-~/.local/state}/ai-sandbox/runtime/bwrap/<hash>/home`.
+
+### Serve and OpenChamber under bwrap
+
+`serve start|stop|attach` and `openchamber start|stop` work under both backends; the Docker path is unchanged. Under bwrap the server runs the **host's** OpenCode inside a detached sandbox:
+
+- The server is launched with `setsid bwrap …` and `--die-with-parent` omitted (it must outlive the launcher); its process-group id is recorded. `serve stop` signals that group (SIGTERM, then SIGKILL), which reaches the sandboxed server even under `--unshare-all` PID isolation.
+- A bwrap-only record, `serve.state`, is written under the per-user state dir (`…/ai-sandbox/serve/<name>/serve.state`) with `runtime`, `package`, `port`, `hostname`, `pgid`, and `pw_var`. Its **presence marks a bwrap server**; when it is absent, `stop`/`attach` use the Docker container labels exactly as before, so `asb serve stop` (with the default `--runtime docker`) still stops a bwrap server.
+- The server password is written to a `0600` file in the state dir, bound read-only, and read into the environment by an inner `sh -c` immediately before `exec` — `bwrap --setenv` would otherwise expose the value in the monitor's argv. The Docker path keeps forwarding by name (`-e NAME`); in both, the value never appears in argv.
+- The readiness probe runs on the host against loopback (the server shares the host network), using Node with the password from the environment, or `curl --netrc-file` as a fallback.
+- `serve attach` opens a TUI in a second sandbox sharing the same workspace and home layer. Generated files for a detached server (`gitconfig`, credential file, `server.log`, `server.pgid`) live in the state dir so `serve stop` removes them.
+- Version pins are ignored (the host tool is used), matching interactive bwrap; the v1/v2 command and health shape follow the installed version, and OpenCode's own log (`<data-dir>/log/opencode.log`) is the server log.
 
 ## Network isolation
 

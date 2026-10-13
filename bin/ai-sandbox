@@ -520,9 +520,24 @@ openchamber_load_config() {
 openchamber_prepare_start() {
   command -v "$OC_BIN" >/dev/null 2>&1 ||
     { launcher_error "openchamber binary '$OC_BIN' not found; install it with 'npm install -g @openchamber/web', put it on PATH, or set openchamber.bin"; return 1; }
-  case "$TOOL_PACKAGE" in
+  local effective="${TOOL_PACKAGE}"
+  if [[ "$RUNTIME" == bwrap ]]; then
+    local hv; hv="$(detect_host_version opencode)"
+    case "${hv#v}" in
+      ''|1|1.*) effective="opencode-ai${hv:+@$hv}" ;;
+      *)        effective="@opencode/cli${hv:+@$hv}" ;;
+    esac
+  fi
+  case "$effective" in
     @opencode/cli*) ;;
-    *) launcher_error "openchamber requires OpenCode 2.0.20+; use --tool opencode@2.x"; return 1 ;;
+    *)
+      if [[ "$RUNTIME" == bwrap ]]; then
+        launcher_error "openchamber requires OpenCode 2.0.20+; the host OpenCode is too old for --runtime bwrap; install OpenCode 2.0.20+"
+      else
+        launcher_error "openchamber requires OpenCode 2.0.20+; use --tool opencode@2.x"
+      fi
+      return 1
+      ;;
   esac
   if [[ "$OC_SERVER_PASSWORD_DEFAULT" == true ]]; then
     # Forward the default by name through the shared serve path.
@@ -1114,10 +1129,11 @@ bwrap_prepare_env() {
 }
 
 # Run the selected agent on the host inside a bwrap namespace sandbox.
-run_bwrap_agent() {
-  local tool_path
-  tool_path="$(bwrap_resolve_host_tool "$SELECTED_TOOL")" || { launcher_error "host tool '${SELECTED_TOOL}' not found"; return 2; }
-
+# Assemble the bwrap argv for TOOL_PATH and its arguments into BWRAP_ALL_ARGS.
+# Honors BWRAP_DETACHED (omit --die-with-parent) and BWRAP_GENERATED_DIR
+# (where generated, sandbox-bound files are written).
+bwrap_assemble() {  # TOOL_PATH ARGS...
+  local tool_path="$1"; shift
   BWRAP_HOST_PATH="${PATH}"
   bwrap_prepare_base
   bwrap_prepare_git
@@ -1130,18 +1146,36 @@ run_bwrap_agent() {
   bwrap_translate_mounts \
     "${TOOL_VOLUME_ARGS[@]}" "${GIT_VOLUME_ARGS[@]}" \
     "${EXTRA_MOUNT_VOLUME_ARGS[@]}"
-  BWRAP_EXTRA_ENV=()
+  local -a extra_env=()
   if [[ -n "${POLICY_FILE:-}" ]]; then
     BWRAP_MOUNT_ARGS+=(--ro-bind "$POLICY_FILE" /run/ai-sandbox/git-policy.conf)
-    BWRAP_EXTRA_ENV+=(--setenv GIT_POLICY_FILE /run/ai-sandbox/git-policy.conf)
+    extra_env+=(--setenv GIT_POLICY_FILE /run/ai-sandbox/git-policy.conf)
   fi
   if [[ -n "${MCP_CONFIG_FILE:-}" ]]; then
     BWRAP_MOUNT_ARGS+=(--ro-bind "$MCP_CONFIG_FILE" /run/ai-sandbox/mcp-config.json)
+  fi
+  if [[ -n "${BWRAP_SERVER_PASSWORD_FILE:-}" ]]; then
+    BWRAP_MOUNT_ARGS+=(--ro-bind "$BWRAP_SERVER_PASSWORD_FILE" /run/ai-sandbox/server-password)
   fi
   bwrap_prepare_env
   bwrap_translate_env \
     "${TOOL_ENV_ARGS[@]}" "${GIT_ENV_ARGS[@]}" "${GIT_MODE_ENV_ARGS[@]}" \
     "${PROXY_ENV_ARGS[@]}" "${HOST_SETTINGS_ENV_ARGS[@]}" "${BROWSER_ENV_ARGS[@]}"
+  BWRAP_ALL_ARGS=(
+    "${BWRAP_BASE_ARGS[@]}"
+    "${BWRAP_GIT_ARGS[@]}"
+    "${BWRAP_MOUNT_ARGS[@]}"
+    "${BWRAP_BASE_ENV[@]}"
+    "${BWRAP_TRANSLATED_ENV[@]}"
+    "${extra_env[@]}"
+    --chdir "$WORKSPACE_DIR"
+    "$tool_path" "$@"
+  )
+}
+
+run_bwrap_agent() {
+  local tool_path
+  tool_path="$(bwrap_resolve_host_tool "$SELECTED_TOOL")" || { launcher_error "host tool '${SELECTED_TOOL}' not found"; return 2; }
 
   # Rewrite the fixed /etc/ai-sandbox MCP-config path to the relocated one.
   local -a tool_args=() a
@@ -1153,15 +1187,8 @@ run_bwrap_agent() {
     fi
   done
 
-  bwrap \
-    "${BWRAP_BASE_ARGS[@]}" \
-    "${BWRAP_GIT_ARGS[@]}" \
-    "${BWRAP_MOUNT_ARGS[@]}" \
-    "${BWRAP_BASE_ENV[@]}" \
-    "${BWRAP_TRANSLATED_ENV[@]}" \
-    "${BWRAP_EXTRA_ENV[@]}" \
-    --chdir "$WORKSPACE_DIR" \
-    "$tool_path" "${tool_args[@]}" "${TOOL_USER_ARGS[@]}"
+  bwrap_assemble "$tool_path" "${tool_args[@]}" "${TOOL_USER_ARGS[@]}"
+  bwrap "${BWRAP_ALL_ARGS[@]}"
 }
 
 # Probe whether the bwrap backend can run on this host. Returns 0 and prints
@@ -1271,8 +1298,11 @@ bwrap_prepare_base() {
   # terminal's controlling session/foreground process group, so the agent would
   # never receive SIGWINCH (terminal resize) or SIGINT (Ctrl-C). Keep it in the
   # caller's session so an interactive TUI behaves like a normal foreground job.
-  # --die-with-parent still reaps the agent when the launcher is killed.
-  BWRAP_BASE_ARGS=(--unshare-all --share-net --die-with-parent)
+  # --die-with-parent still reaps the agent when the launcher is killed. It is
+  # omitted only for a detached server (BWRAP_DETACHED=true), which must outlive
+  # the launcher; that server is stopped by signalling its process group.
+  BWRAP_BASE_ARGS=(--unshare-all --share-net)
+  [[ "${BWRAP_DETACHED:-false}" == "true" ]] || BWRAP_BASE_ARGS+=(--die-with-parent)
   BWRAP_LAYER_DIR="$(bwrap_home_layer_path)"
   BWRAP_WORK_DIR="$(dirname "$BWRAP_LAYER_DIR")/work"
   BWRAP_HOME="${BWRAP_HOME:-$HOME}"
@@ -1369,7 +1399,11 @@ bwrap_prepare_git() {
     --dir /run/ai-sandbox/bin
     --ro-bind "$SANDBOX_COMPOSE_DIR/git-wrapper" /run/ai-sandbox/bin/git
   )
-  BWRAP_GITCONFIG="$(mktemp)"
+  if [[ -n "${BWRAP_GENERATED_DIR:-}" ]]; then
+    BWRAP_GITCONFIG="$(mktemp "$BWRAP_GENERATED_DIR/gitconfig.XXXXXX")"
+  else
+    BWRAP_GITCONFIG="$(mktemp)"
+  fi
   cat > "$BWRAP_GITCONFIG" <<'EOF'
 [core]
 	sshCommand = echo "[SECURITY] Remote push operations are prohibited inside this sandbox." && false
@@ -1380,6 +1414,228 @@ bwrap_prepare_git() {
 EOF
   BWRAP_GIT_ARGS+=(--ro-bind "$BWRAP_GITCONFIG" /run/ai-sandbox/gitconfig)
   return 0
+}
+
+# --- Serve runtime state (bwrap backend) ---
+
+# Write the bwrap server record for this workspace. Arguments are KEY=VALUE
+# pairs; the file is replaced atomically so a reader never sees a partial record.
+serve_state_write() {  # KEY=VALUE...
+  [[ -n "$SERVE_STATE_DIR" ]] || return 1
+  mkdir -p -m 700 "$SERVE_STATE_DIR" || return 1
+  local tmp
+  tmp="$(mktemp "$SERVE_STATE_DIR/.state.XXXXXX")" || return 1
+  printf '%s\n' "$@" > "$tmp"
+  mv -f -- "$tmp" "$SERVE_STATE_DIR/serve.state"
+}
+
+# Print the value of KEY from the record. Returns 1 when it is absent.
+serve_state_get() {  # KEY
+  local line
+  [[ -f "$SERVE_STATE_DIR/serve.state" ]] || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "$1="*) printf '%s' "${line#*=}"; return 0 ;;
+    esac
+  done < "$SERVE_STATE_DIR/serve.state"
+  return 1
+}
+
+# Populate SERVER_PACKAGE, SERVER_COMMAND, and SERVE_HEALTH_PATH for the
+# resolved runtime. Docker uses the requested package; bwrap uses the host
+# OpenCode version (pins are ignored, matching interactive bwrap).
+serve_resolve_shape() {
+  case "$RUNTIME" in
+    bwrap)
+      local hv; hv="$(detect_host_version opencode)"
+      case "${hv#v}" in
+        ''|1|1.*)
+          SERVER_PACKAGE="opencode-ai${hv:+@$hv}"
+          SERVER_COMMAND=web
+          [[ "$SERVE_HEADLESS" == true ]] && SERVER_COMMAND=serve
+          SERVE_HEALTH_PATH=/global/health
+          ;;
+        *)
+          SERVER_PACKAGE="@opencode/cli${hv:+@$hv}"
+          SERVER_COMMAND=serve
+          SERVE_HEALTH_PATH=/api/info
+          ;;
+      esac
+      ;;
+    *)
+      SERVER_PACKAGE="$TOOL_PACKAGE"
+      case "$TOOL_PACKAGE" in
+        opencode-ai*)
+          SERVER_COMMAND=web
+          [[ "$SERVE_HEADLESS" == true ]] && SERVER_COMMAND=serve
+          SERVE_HEALTH_PATH=/global/health
+          ;;
+        @opencode/cli*)
+          SERVER_COMMAND=serve
+          SERVE_HEALTH_PATH=/api/info
+          ;;
+      esac
+      ;;
+  esac
+}
+
+# The env var the sandboxed server reads its password from (mirrors Docker's
+# choice): v1 uses OPENCODE_SERVER_PASSWORD; v2 uses OPENCODE_SERVER_PASSWORD
+# when the user set that, else OPENCODE_PASSWORD.
+serve_bwrap_pw_var() {  # PACKAGE
+  case "$1" in
+    opencode-ai*) printf '%s' OPENCODE_SERVER_PASSWORD ;;
+    *) if [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]]; then printf '%s' OPENCODE_SERVER_PASSWORD; else printf '%s' OPENCODE_PASSWORD; fi ;;
+  esac
+}
+
+# Probe a detached bwrap server on loopback until it answers or the process
+# dies. PW is supplied through the environment, never argv. Returns 0 when ready.
+serve_probe_bwrap() {  # PW
+  local pw="$1" url_host="$SERVE_HOSTNAME"
+  case "$url_host" in ""|0.0.0.0) url_host=127.0.0.1 ;; "::") url_host="::1" ;; esac
+  local attempt
+  for ((attempt=0; attempt<20; attempt++)); do
+    if [[ -n "${SERVE_PGID:-}" ]] && ! kill -0 -- "-$SERVE_PGID" 2>/dev/null; then
+      return 1
+    fi
+    if command -v node >/dev/null 2>&1; then
+      if OPENCODE_SERVER_PASSWORD="$pw" OPENCODE_PASSWORD="$pw" \
+         OPENCODE_SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}" node -e '
+        let host = process.argv[1]
+        if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`
+        const url = `http://${host}:${process.argv[2]}${process.argv[3]}`
+        const username = process.env.OPENCODE_SERVER_USERNAME || "opencode"
+        const password = process.env.OPENCODE_SERVER_PASSWORD || process.env.OPENCODE_PASSWORD || ""
+        const auth = "Basic " + Buffer.from(`${username}:${password}`).toString("base64")
+        fetch(url, {headers: {Authorization: auth}, signal: AbortSignal.timeout(1000)})
+          .then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      ' "$url_host" "$SERVE_PORT" "$SERVE_HEALTH_PATH" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif command -v curl >/dev/null 2>&1; then
+      local netrc; netrc="$(mktemp "$SERVE_STATE_DIR/.netrc.XXXXXX")"
+      chmod 600 "$netrc"
+      printf 'machine %s login %s password %s\n' \
+        "$url_host" "${OPENCODE_SERVER_USERNAME:-opencode}" "$pw" > "$netrc"
+      if curl -sf --netrc-file "$netrc" --max-time 2 \
+           "http://$url_host:$SERVE_PORT$SERVE_HEALTH_PATH" >/dev/null 2>&1; then
+        rm -f "$netrc"; return 0
+      fi
+      rm -f "$netrc"
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Start a detached OpenCode server under bwrap. Returns 0 when ready.
+serve_start_bwrap() {
+  bwrap_available || return 1
+  local tool_path; tool_path="$(bwrap_resolve_host_tool opencode)" || return 1
+  serve_resolve_shape
+
+  local pwfile="$SERVE_STATE_DIR/server-password" pw
+  case "$SERVER_PACKAGE" in
+    opencode-ai*) pw="${OPENCODE_SERVER_PASSWORD:-}" ;;
+    *) pw="${OPENCODE_SERVER_PASSWORD:-${OPENCODE_PASSWORD:-}}" ;;
+  esac
+  printf '%s' "$pw" > "$pwfile"
+  chmod 600 "$pwfile"
+  local pw_var; pw_var="$(serve_bwrap_pw_var "$SERVER_PACKAGE")"
+
+  SANDBOX_BWRAP_PASSTHROUGH="$(resolve_list SANDBOX_BWRAP_PASSTHROUGH .bwrap.passthrough)"
+  SANDBOX_BWRAP_DENY="$(resolve_list SANDBOX_BWRAP_DENY .bwrap.deny)"
+  BWRAP_DETACHED=true
+  BWRAP_GENERATED_DIR="$SERVE_STATE_DIR"
+  BWRAP_SERVER_PASSWORD_FILE="$pwfile"
+  bwrap_assemble /bin/sh -c \
+    "export $pw_var=\"\$(cat /run/ai-sandbox/server-password)\"; exec \"\$0\" \"\$@\"" \
+    "$tool_path" "$SERVER_COMMAND" --hostname "$SERVE_HOSTNAME" --port "$SERVE_PORT"
+
+  local log="$SERVE_STATE_DIR/server.log" pgidfile="$SERVE_STATE_DIR/server.pgid"
+  rm -f "$pgidfile"
+  setsid sh -c 'echo $$ > "$1"; shift; exec "$@"' _ "$pgidfile" bwrap "${BWRAP_ALL_ARGS[@]}" \
+    </dev/null >>"$log" 2>&1 &
+  local i
+  for ((i=0; i<100; i++)); do [[ -s "$pgidfile" ]] && break; sleep 0.02; done
+  SERVE_PGID="$(cat "$pgidfile" 2>/dev/null || true)"
+  if [[ -z "$SERVE_PGID" ]]; then
+    launcher_error "failed to start the bwrap server; see $log"
+    return 1
+  fi
+  SERVE_STARTED=true
+
+  # Record the server before probing so a never-ready server is still
+  # recognizable and removable with 'serve stop'.
+  if ! serve_state_write \
+    "runtime=bwrap" \
+    "package=$SERVER_PACKAGE" \
+    "port=$SERVE_PORT" \
+    "hostname=$SERVE_HOSTNAME" \
+    "pgid=$SERVE_PGID" \
+    "pw_var=$pw_var"; then
+    launcher_error "failed to record server state under $SERVE_STATE_DIR"
+    return 1
+  fi
+
+  if ! serve_probe_bwrap "$pw"; then
+    launcher_error "OpenCode server did not become ready; see the OpenCode log and $log, then use 'asb serve stop'"
+    return 1
+  fi
+
+  return 0
+}
+
+# Stop a detached bwrap server: signal its recorded process group, escalate to
+# SIGKILL if it lingers, then remove the state directory.
+serve_stop_bwrap() {
+  local pgid; pgid="$(serve_state_get pgid 2>/dev/null || true)"
+  if [[ -n "$pgid" ]] && kill -0 -- "-$pgid" 2>/dev/null; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+    local i
+    for ((i=0; i<50; i++)); do
+      kill -0 -- "-$pgid" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 -- "-$pgid" 2>/dev/null; then
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+    fi
+  fi
+  rm -rf -- "$SERVE_STATE_DIR"
+  SERVE_STATE_DIR=""
+  echo "ai-sandbox: stopped OpenCode server for $WORKSPACE_DIR"
+}
+
+# Open a TUI against a running bwrap server, in a second interactive sandbox
+# that shares the workspace and home layer.
+serve_attach_bwrap() {
+  bwrap_available || return 2
+  local tool_path; tool_path="$(bwrap_resolve_host_tool opencode)" || return 2
+  SANDBOX_BWRAP_PASSTHROUGH="$(resolve_list SANDBOX_BWRAP_PASSTHROUGH .bwrap.passthrough)"
+  SANDBOX_BWRAP_DENY="$(resolve_list SANDBOX_BWRAP_DENY .bwrap.deny)"
+
+  local attach_host="$SERVE_HOSTNAME"
+  [[ "$attach_host" == "0.0.0.0" ]] && attach_host=127.0.0.1
+  local -a attach_args
+  case "$SERVE_PACKAGE" in
+    opencode-ai*)   attach_args=(attach "http://$attach_host:$SERVE_PORT") ;;
+    @opencode/cli*) attach_args=(--server "http://$attach_host:$SERVE_PORT") ;;
+    *) launcher_error "server package metadata is missing"; return 2 ;;
+  esac
+
+  BWRAP_DETACHED=false
+  local pwfile="$SERVE_STATE_DIR/server-password"
+  if [[ -n "${SERVE_PW_VAR:-}" && -f "$pwfile" ]]; then
+    BWRAP_SERVER_PASSWORD_FILE="$pwfile"
+    bwrap_assemble /bin/sh -c \
+      "export ${SERVE_PW_VAR}=\"\$(cat /run/ai-sandbox/server-password)\"; exec \"\$0\" \"\$@\"" \
+      "$tool_path" "${attach_args[@]}"
+  else
+    bwrap_assemble "$tool_path" "${attach_args[@]}"
+  fi
+  progress_stop
+  exec bwrap "${BWRAP_ALL_ARGS[@]}"
 }
 
 # --- Main execution (only runs when executed, not sourced) ---
@@ -1480,10 +1736,6 @@ READ_HOME="$(resolve_read_home "$CLI_READ_HOME")"
 if [[ "$RUNTIME" == docker && "$CLI_READ_HOME" == true ]]; then
   warn_msg "--read-home has no effect with --runtime docker (it is ignored)."
 fi
-if [[ -n "$SERVE_ACTION" && "$RUNTIME" == bwrap ]]; then
-  launcher_error "serve and openchamber are available only with --runtime docker in this release"; exit 2
-fi
-
 # Proxy environment passthrough applies to npx and every tool profile.
 SANDBOX_PROXY_ENV_PASSTHROUGH="$(resolve SANDBOX_PROXY_ENV_PASSTHROUGH .proxy.env_passthrough true)"
 configure_proxy_env
@@ -1546,6 +1798,10 @@ if [[ "$SERVE_ACTION" == stop ]]; then
       exit 0
     fi
   fi
+  if [[ -f "$SERVE_STATE_DIR/serve.state" ]]; then
+    serve_stop_bwrap
+    exit 0
+  fi
   docker container inspect "$SERVE_NAME" >/dev/null 2>&1 || { launcher_error "server is not running for $WORKSPACE_DIR"; exit 2; }
   docker stop "$SERVE_NAME" >/dev/null 2>&1 || true
   docker rm "$SERVE_NAME" >/dev/null
@@ -1555,6 +1811,19 @@ if [[ "$SERVE_ACTION" == stop ]]; then
   exit 0
 fi
 if [[ "$SERVE_ACTION" == attach ]]; then
+  if [[ -f "$SERVE_STATE_DIR/serve.state" ]]; then
+    SERVE_PACKAGE="$(serve_state_get package || true)"
+    SERVE_PORT="$(serve_state_get port || true)"
+    SERVE_HOSTNAME="$(serve_state_get hostname || true)"
+    SERVE_PGID="$(serve_state_get pgid || true)"
+    SERVE_PW_VAR="$(serve_state_get pw_var || true)"
+    [[ "$SERVE_PORT" =~ ^[0-9]+$ ]] || { launcher_error "server port metadata is missing"; exit 2; }
+    if [[ -z "$SERVE_PGID" ]] || ! kill -0 -- "-$SERVE_PGID" 2>/dev/null; then
+      launcher_error "server is not running for $WORKSPACE_DIR"; exit 2
+    fi
+    serve_attach_bwrap
+    exit $?
+  fi
   SERVE_PORT="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.port" }}' "$SERVE_NAME")" || { launcher_error "server is not running for $WORKSPACE_DIR"; exit 2; }
   [[ "$SERVE_PORT" =~ ^[0-9]+$ ]] || { launcher_error "server port metadata is missing"; exit 2; }
   SERVE_HOSTNAME="$(docker inspect -f '{{ index .Config.Labels "ai-sandbox.serve.hostname" }}' "$SERVE_NAME")"
@@ -1578,7 +1847,11 @@ if [[ "$SERVE_ACTION" == start ]]; then
     openchamber_load_config || exit 2
     openchamber_prepare_start || exit 2
   fi
-  case "$TOOL_PACKAGE" in
+  serve_resolve_shape
+  if [[ "$RUNTIME" == bwrap && ( -n "${OPENCODE_VERSION:-}" || -n "${CLI_TOOL_VERSION:-}" ) ]]; then
+    warn_msg "version pins are ignored under --runtime bwrap; the host opencode is used."
+  fi
+  case "$SERVER_PACKAGE" in
     opencode-ai*)
       [[ -n "${OPENCODE_SERVER_PASSWORD:-}" ]] ||
         { launcher_error "OPENCODE_SERVER_PASSWORD is required for serve start (OpenCode v1)"; exit 2; }
@@ -1588,7 +1861,29 @@ if [[ "$SERVE_ACTION" == start ]]; then
         { launcher_error "OPENCODE_PASSWORD or OPENCODE_SERVER_PASSWORD is required for serve start (OpenCode v2)"; exit 2; }
       ;;
   esac
-  if docker container inspect "$SERVE_NAME" >/dev/null 2>&1; then
+  if [[ -f "$SERVE_STATE_DIR/serve.state" ]]; then
+    # A bwrap server record exists for this workspace.
+    SERVE_PACKAGE="$(serve_state_get package || true)"
+    SERVE_PORT="$(serve_state_get port || true)"
+    SERVE_HOSTNAME="$(serve_state_get hostname || true)"
+    SERVE_PGID="$(serve_state_get pgid || true)"
+    SERVE_ALIVE=false
+    if [[ -n "$SERVE_PGID" ]] && kill -0 -- "-$SERVE_PGID" 2>/dev/null; then
+      SERVE_ALIVE=true
+    fi
+    if [[ "$OPENCHAMBER_ACTION" == start ]]; then
+      if [[ "$SERVE_ALIVE" == true ]]; then
+        SERVE_REUSE=true
+        SERVE_STARTED=true
+      else
+        launcher_error "a stopped OpenCode server exists for $WORKSPACE_DIR; run 'asb serve stop' first"
+        exit 2
+      fi
+    else
+      launcher_error "server already exists for $WORKSPACE_DIR; use 'asb serve stop' first"
+      exit 2
+    fi
+  elif docker container inspect "$SERVE_NAME" >/dev/null 2>&1; then
     if [[ "$OPENCHAMBER_ACTION" == start ]]; then
       # Reuse a running server instead of refusing; a stopped one is an error so
       # a wedged container is dealt with explicitly.
@@ -1764,13 +2059,13 @@ fi
 
 if [[ "$SERVE_ACTION" == start ]]; then
   if [[ "${SERVE_REUSE:-false}" != true ]]; then
-  case "$TOOL_PACKAGE" in
+    if [[ "$RUNTIME" == bwrap ]]; then
+      serve_start_bwrap || exit 2
+    else
+  case "$SERVER_PACKAGE" in
     opencode-ai*)
       SERVER_ENV_ARGS=(-e OPENCODE_SERVER_PASSWORD)
       [[ -n "${OPENCODE_SERVER_USERNAME:-}" ]] && SERVER_ENV_ARGS+=(-e OPENCODE_SERVER_USERNAME)
-      SERVER_COMMAND=web
-      [[ "$SERVE_HEADLESS" == true ]] && SERVER_COMMAND=serve
-      SERVE_HEALTH_PATH=/global/health
       ;;
     @opencode/cli*)
       # v2: --headless has no API-only equivalent; serve always runs web+API.
@@ -1779,8 +2074,6 @@ if [[ "$SERVE_ACTION" == start ]]; then
       else
         SERVER_ENV_ARGS=(-e OPENCODE_PASSWORD)
       fi
-      SERVER_COMMAND=serve
-      SERVE_HEALTH_PATH=/api/info
       ;;
   esac
   docker compose -p "$COMPOSE_PROJECT" -f "$SANDBOX_COMPOSE_DIR/docker-compose.yml" run \
@@ -1834,6 +2127,7 @@ if [[ "$SERVE_ACTION" == start ]]; then
     launcher_error "OpenCode server did not become ready; inspect 'docker logs $SERVE_NAME', then use 'asb serve stop'"
     exit 2
   fi
+    fi
   fi
   if [[ "$SERVE_HOSTNAME" == "0.0.0.0" ]]; then
     echo "ai-sandbox: OpenCode server started at http://127.0.0.1:$SERVE_PORT"
@@ -1845,7 +2139,7 @@ if [[ "$SERVE_ACTION" == start ]]; then
     openchamber_start_ui || exit 2
     exit 0
   fi
-  case "$TOOL_PACKAGE" in
+  case "$SERVER_PACKAGE" in
     opencode-ai*)
       echo "ai-sandbox: username ${OPENCODE_SERVER_USERNAME:-opencode}; password from OPENCODE_SERVER_PASSWORD"
       ;;

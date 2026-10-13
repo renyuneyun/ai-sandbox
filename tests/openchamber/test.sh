@@ -95,6 +95,58 @@ oargv()  { tr '\0' ' ' < "$TMP/oargv"; }
 oenv()   { grep "^$1=" "$TMP/oenv" 2>/dev/null | head -1 | cut -d= -f2-; }
 state_port() { cat "$(find "$TMP/home/.local/state/ai-sandbox/serve" -name openchamber.port 2>/dev/null | head -1)" 2>/dev/null; }
 
+# --- bwrap harness (for --runtime bwrap) ---
+mkdir -p "$TMP/bwrapbin"
+cat > "$TMP/bwrapbin/bwrap" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >> "$BWRAP_CALLS"; printf '\n' >> "$BWRAP_CALLS"
+case " $* " in
+  *"/bin/true"*) exit 0 ;;
+  *" serve "*|*" web "*) exec sleep 60 ;;
+esac
+exit 0
+EOF
+cat > "$TMP/bwrapbin/opencode" <<'EOF'
+#!/usr/bin/env bash
+echo "opencode v${OPENCODE_STUB_VERSION:-2.0.26}"
+EOF
+cat > "$TMP/bwrapbin/node" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$TMP/bwrapbin/"*
+
+run_bwrap() {  # ARGS...
+  : > "$TMP/dcalls"; : > "$TMP/oargv"; : > "$TMP/oenv"; : > "$TMP/bwcalls"
+  env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" \
+    PATH="$TMP/bwrapbin:$TMP/dockerbin:$TMP/ocbin:$PATH" BWRAP_CALLS="$TMP/bwcalls" \
+    DOCKER_CALLS="$TMP/dcalls" OPENCHAMBER_ARGV="$TMP/oargv" OPENCHAMBER_ENV="$TMP/oenv" \
+    SANDBOX_PROGRESS=false SANDBOX_CLEANUP=false \
+    SANDBOX_UID=1234 SANDBOX_GID=1234 SANDBOX_USERNAME=tester SANDBOX_HOME=/home/tester \
+    OPENCODE_STUB_VERSION="${OPENCODE_STUB_VERSION:-2.0.26}" \
+    OPENCODE_SERVER_PASSWORD="${TEST_SERVER_PASSWORD-test password}" \
+    OPENCODE_PASSWORD="${TEST_PASSWORD-}" \
+    OPENCHAMBER_UI_PASSWORD="${TEST_UI_PASSWORD-ui pass}" \
+    STUB_FREE_PORT="${TEST_STUB_FREE_PORT:-3000}" \
+    AI_SANDBOX_DIR="$ROOT/share/ai-sandbox" \
+    bash "$LAUNCHER" "$@" >"$TMP/out" 2>"$TMP/err"
+}
+
+serve_state_path() {
+  local h
+  h="$(printf '%s' "$TMP/project" | git hash-object --stdin)"
+  printf '%s/ai-sandbox/serve/ai-sandbox-serve-1234-%s/serve.state' \
+    "$TMP/home/.local/state" "${h:0:12}"
+}
+
+cleanup_bwrap() {
+  local sf pgid
+  sf="$(serve_state_path)"
+  pgid="$(sed -n 's/^pgid=//p' "$sf" 2>/dev/null)"
+  [[ -n "$pgid" ]] && kill -KILL -- "-$pgid" 2>/dev/null || true
+  rm -rf "$TMP/home/.local/state"
+}
+
 fail=0
 
 # --- start: server first, then the host UI attached to it ---
@@ -240,7 +292,7 @@ fi
 if run_launcher openchamber start --tool opencode@1.18.31 "$TMP/project"; then
   echo 'FAIL: openchamber accepted an OpenCode v1 tool'; fail=1
 else
-  if grep -q '2.0.20' "$TMP/err" && [[ ! -s "$TMP/dcalls" ]]; then
+  if grep -q 'use --tool opencode@2.x' "$TMP/err" && [[ ! -s "$TMP/dcalls" ]]; then
     echo 'PASS: openchamber requires OpenCode v2 (refused before Docker)'
   else
     echo "FAIL: v1 refusal: $(cat "$TMP/err")"; fail=1
@@ -319,5 +371,36 @@ else
   echo "FAIL: keep-server stop rejected: $(cat "$TMP/err")"; fail=1
 fi
 unset TEST_DOCKER_EXISTS
+
+# --- openchamber start under bwrap refuses a v1 host OpenCode ---
+OPENCODE_STUB_VERSION=1.18.31
+if run_bwrap openchamber start --runtime bwrap --tool opencode@2.0.26 "$TMP/project"; then
+  echo 'FAIL: openchamber accepted a v1 host under bwrap'; fail=1
+else
+  if grep -q '2.0.20' "$TMP/err"; then
+    echo 'PASS: openchamber requires a v2 host under bwrap'
+  else echo "FAIL: openchamber v1-host diagnostic: $(cat "$TMP/err")"; fail=1; fi
+fi
+unset OPENCODE_STUB_VERSION
+cleanup_bwrap
+
+# --- openchamber start under bwrap reuses a running server (state, not labels) ---
+sf="$(serve_state_path)"; mkdir -p "$(dirname "$sf")"
+setsid sh -c 'echo $$ > "$1"; exec sleep 300' _ "$TMP/oc.pgid" &
+sleep 0.3
+{
+  echo "runtime=bwrap"; echo "package=@opencode/cli@2.0.26"
+  echo "port=4096"; echo "hostname=0.0.0.0"
+  echo "pgid=$(cat "$TMP/oc.pgid")"; echo "pw_var=OPENCODE_PASSWORD"
+} > "$sf"
+if run_bwrap openchamber start --runtime bwrap --tool opencode "$TMP/project"; then
+  if grep -q 'OpenChamber UI started' "$TMP/out"; then
+    echo 'PASS: openchamber start under bwrap reuses the running server'
+  else echo "FAIL: openchamber reuse output: $(cat "$TMP/out") $(cat "$TMP/err")"; fail=1; fi
+else
+  echo "FAIL: openchamber start under bwrap failed: $(cat "$TMP/err")"; fail=1
+fi
+kill -KILL -- "-$(cat "$TMP/oc.pgid")" 2>/dev/null || true
+rm -rf "$TMP/home/.local/state"
 
 exit "$fail"

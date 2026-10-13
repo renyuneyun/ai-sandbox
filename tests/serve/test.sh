@@ -54,6 +54,124 @@ run_launcher() {
 }
 
 fail=0
+
+# --- bwrap serve stubs and helpers ---
+cat > "$TMP/bin/bwrap" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >> "$BWRAP_CALLS"; printf '\n' >> "$BWRAP_CALLS"
+case " $* " in
+  *"/bin/true"*) exit 0 ;;
+  *" serve "*|*" web "*) exec sleep 60 ;;
+esac
+exit 0
+EOF
+cat > "$TMP/bin/opencode" <<'EOF'
+#!/usr/bin/env bash
+echo "opencode v${OPENCODE_STUB_VERSION:-2.0.26}"
+EOF
+cat > "$TMP/bin/node" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${NODE_STUB_RC:-0}" != 0 ]]; then
+  pg="$(cat "$HOME"/.local/state/ai-sandbox/serve/*/server.pgid 2>/dev/null | head -1)"
+  [[ -n "$pg" ]] && kill -KILL -- "-$pg" 2>/dev/null
+  exit "$NODE_STUB_RC"
+fi
+exit 0
+EOF
+chmod +x "$TMP/bin/bwrap" "$TMP/bin/opencode" "$TMP/bin/node"
+
+run_bwrap() {  # ARGS...
+  : > "$TMP/bwcalls"
+  env HOME="$TMP/home" XDG_CONFIG_HOME="$TMP/home/.config" \
+    PATH="$TMP/bin:$PATH" BWRAP_CALLS="$TMP/bwcalls" \
+    SANDBOX_PROGRESS=false SANDBOX_CLEANUP=false \
+    SANDBOX_UID=1234 SANDBOX_GID=1234 SANDBOX_USERNAME=tester SANDBOX_HOME=/home/tester \
+    OPENCODE_STUB_VERSION="${OPENCODE_STUB_VERSION:-2.0.26}" \
+    NODE_STUB_RC="${NODE_STUB_RC:-0}" \
+    OPENCODE_SERVER_PASSWORD="${TEST_SERVER_PASSWORD-test password}" \
+    OPENCODE_PASSWORD="${TEST_PASSWORD-}" \
+    AI_SANDBOX_DIR="$ROOT/share/ai-sandbox" \
+    bash "$LAUNCHER" "$@" >"$TMP/out" 2>"$TMP/err"
+}
+
+serve_state_path() {
+  local h
+  h="$(printf '%s' "$TMP/project" | git hash-object --stdin)"
+  printf '%s/ai-sandbox/serve/ai-sandbox-serve-1234-%s/serve.state' \
+    "$TMP/home/.local/state" "${h:0:12}"
+}
+
+cleanup_bwrap() {
+  local sf pgid
+  sf="$(serve_state_path)"
+  pgid="$(sed -n 's/^pgid=//p' "$sf" 2>/dev/null)"
+  [[ -n "$pgid" ]] && kill -KILL -- "-$pgid" 2>/dev/null || true
+  rm -rf "$TMP/home/.local/state"
+}
+
+# --- serve start --runtime bwrap: detached, no --die-with-parent, state written ---
+if run_bwrap serve start --runtime bwrap --tool opencode --hostname 0.0.0.0 --port 4096 "$TMP/project"; then
+  sf="$(serve_state_path)"; ok=1
+  tr '\0' ' ' < "$TMP/bwcalls" | grep -q -- '--unshare-all' || ok=0
+  ! tr '\0' ' ' < "$TMP/bwcalls" | grep -q -- '--die-with-parent' || ok=0
+  tr '\0' ' ' < "$TMP/bwcalls" | grep -q -- 'serve --hostname 0.0.0.0 --port 4096' || ok=0
+  grep -qx 'runtime=bwrap' "$sf" 2>/dev/null || ok=0
+  grep -q '^pgid=' "$sf" 2>/dev/null || ok=0
+  if [[ "$ok" == 1 ]]; then echo 'PASS: bwrap serve start is detached with state'
+  else echo "FAIL: bwrap serve argv/state: $(tr '\0' ' ' < "$TMP/bwcalls") | $(cat "$sf" 2>/dev/null)"; fail=1; fi
+else
+  echo "FAIL: bwrap serve start failed: $(cat "$TMP/err")"; fail=1
+fi
+cleanup_bwrap
+
+# --- the password value never appears in any argv ---
+run_bwrap serve start --runtime bwrap --tool opencode "$TMP/project" || true
+if tr '\0' '\n' < "$TMP/bwcalls" | grep -q 'test password'; then
+  echo 'FAIL: server password leaked into bwrap argv'; fail=1
+else
+  echo 'PASS: server password is absent from bwrap argv'
+fi
+cleanup_bwrap
+
+# --- v1 host version selects web + /global/health ---
+OPENCODE_STUB_VERSION=1.18.31
+if run_bwrap serve start --runtime bwrap --tool opencode "$TMP/project"; then
+  if tr '\0' ' ' < "$TMP/bwcalls" | grep -q ' web --hostname'; then
+    echo 'PASS: bwrap v1 uses the web command'
+  else echo "FAIL: bwrap v1 command: $(tr '\0' ' ' < "$TMP/bwcalls")"; fail=1; fi
+else
+  echo "FAIL: bwrap v1 start failed: $(cat "$TMP/err")"; fail=1
+fi
+unset OPENCODE_STUB_VERSION
+cleanup_bwrap
+
+# --- a server that never becomes ready is recorded and stoppable ---
+NODE_STUB_RC=1
+run_bwrap serve start --runtime bwrap --tool opencode "$TMP/project" && start_rc=0 || start_rc=$?
+sf="$(serve_state_path)"
+if [[ "$start_rc" != 0 && -f "$sf" ]]; then
+  if run_bwrap serve stop --tool opencode "$TMP/project"; then
+    echo 'PASS: a never-ready bwrap server is recorded and stoppable'
+  else echo "FAIL: stop of never-ready server: $(cat "$TMP/err")"; fail=1; fi
+else
+  echo "FAIL: never-ready start left no state (rc=$start_rc): $(cat "$TMP/err")"; fail=1
+fi
+unset NODE_STUB_RC
+cleanup_bwrap
+
+# --- a version pin is warned as ignored and the connect message follows the host version ---
+if run_bwrap serve start --runtime bwrap --tool opencode@1.18.31 "$TMP/project"; then
+  ok=1
+  grep -q 'version pins are ignored' "$TMP/err" || ok=0
+  grep -q "connect a client with 'asb serve attach'" "$TMP/out" || ok=0
+  grep -q 'password from OPENCODE_SERVER_PASSWORD' "$TMP/out" && ok=0
+  if [[ "$ok" == 1 ]]; then echo 'PASS: bwrap serve warns on a version pin and follows the host version'
+  else echo "FAIL: pin warning/connect message: err=[$(cat "$TMP/err")] out=[$(cat "$TMP/out")]"; fail=1; fi
+else
+  echo "FAIL: pinned bwrap start failed: $(cat "$TMP/err")"; fail=1
+fi
+cleanup_bwrap
+
 if run_launcher serve start --tool opencode --hostname 10.44.55.66 --port 4096 "$TMP/project"; then
   if tr '\0' ' ' < "$TMP/calls" | grep -q 'run -d .*opencode-ai@1.18.31 web --hostname 10.44.55.66 --port 4096'; then
     echo 'PASS: detached web server starts in the sandbox'
@@ -353,5 +471,53 @@ else
     echo 'FAIL: stopped-container diagnostic'; fail=1
   fi
 fi
+
+# --- stop signals the recorded process group of a bwrap server ---
+sf="$(serve_state_path)"; rm -rf "$(dirname "$sf")"; mkdir -p "$(dirname "$sf")"
+setsid sh -c 'echo $$ > "$1"; exec sleep 300' _ "$TMP/live.pgid" &
+sleep 0.3
+livepgid="$(cat "$TMP/live.pgid")"
+{
+  echo "runtime=bwrap"; echo "package=@opencode/cli@2.0.26"
+  echo "port=4096"; echo "hostname=0.0.0.0"
+  echo "pgid=$livepgid"; echo "pw_var=OPENCODE_PASSWORD"
+} > "$sf"
+if run_launcher serve stop --tool opencode "$TMP/project"; then
+  sleep 0.3
+  if kill -0 -- "-$livepgid" 2>/dev/null; then
+    echo 'FAIL: stopped bwrap server is still alive'; fail=1
+    kill -KILL -- "-$livepgid" 2>/dev/null || true
+  elif [[ ! -e "$(dirname "$sf")" ]]; then
+    echo 'PASS: serve stop signals the recorded bwrap process group and cleans state'
+  else
+    echo 'FAIL: serve stop left the state dir'; fail=1
+  fi
+else
+  echo "FAIL: bwrap stop failed: $(cat "$TMP/err")"; fail=1
+  kill -KILL -- "-$livepgid" 2>/dev/null || true
+fi
+
+# --- attach builds the interactive sandbox with the recorded URL ---
+sf="$(serve_state_path)"; rm -rf "$(dirname "$sf")"; mkdir -p "$(dirname "$sf")"
+setsid sh -c 'echo $$ > "$1"; exec sleep 300' _ "$TMP/att.pgid" &
+sleep 0.3
+attpgid="$(cat "$TMP/att.pgid")"
+{
+  echo "runtime=bwrap"; echo "package=@opencode/cli@2.0.26"
+  echo "port=4096"; echo "hostname=0.0.0.0"
+  echo "pgid=$attpgid"; echo "pw_var=OPENCODE_PASSWORD"
+} > "$sf"
+if run_bwrap serve attach --tool opencode "$TMP/project"; then
+  bw="$(tr '\0' ' ' < "$TMP/bwcalls")"
+  if [[ "$bw" == *"--die-with-parent"* && "$bw" == *"--server http://127.0.0.1:4096"* ]]; then
+    echo 'PASS: bwrap attach uses the interactive sandbox and recorded URL'
+  else
+    echo "FAIL: bwrap attach argv: $bw"; fail=1
+  fi
+else
+  echo "FAIL: bwrap attach failed: $(cat "$TMP/err")"; fail=1
+fi
+kill -KILL -- "-$attpgid" 2>/dev/null || true
+rm -rf "$TMP/home/.local/state"
 
 exit "$fail"
