@@ -94,6 +94,35 @@ What matters is that each commit stands on its own and the total stays small.
 The measure is what the history looks like to a reviewer or `git bisect`: a few
 logical commits, not a transcript of the editing session.
 
+## Version bumps
+
+The project version is one value duplicated in exactly two places:
+
+- `bin/ai-sandbox` — the `VERSION="X.Y.Z"` constant (printed by `--version`).
+- `packaging/PKGBUILD` — `pkgver=X.Y.Z` (with `pkgrel` reset to `1`).
+
+Neither `README.md` nor `docs/` embeds the version, so a bump never needs a docs
+update. `scripts/bump-version.sh` rewrites both placeholders and, by default,
+commits the change (`chore: bump version to vX.Y.Z`) and creates the matching
+lightweight tag `vX.Y.Z`:
+
+```sh
+scripts/bump-version.sh minor            # 0.7.1 -> 0.8.0
+scripts/bump-version.sh patch            # 0.7.1 -> 0.7.2
+scripts/bump-version.sh major            # 0.7.1 -> 1.0.0
+scripts/bump-version.sh 0.9.3            # explicit version
+scripts/bump-version.sh minor --no-tag   # commit, but no tag
+scripts/bump-version.sh minor --no-commit # edit the files only
+scripts/bump-version.sh minor --dry-run  # preview, change nothing
+```
+
+It reads the current version from `bin/ai-sandbox` and refuses to run when a
+`vX.Y.Z` tag already exists, when the target equals the current version, or
+(unless `--no-commit`/`--dry-run`) when the working tree is dirty. Keep the two
+placeholders in sync (the script only reads and writes them; it does not
+reconcile them if they disagree). The script is dev-only: `install.sh` and
+`packaging/PKGBUILD` do **not** install it, so it needs no packaging changes.
+
 ## Config resolution
 
 Identity, git, proxy, cleanup, policy, browser, mounts, and tool-profile knobs (`SANDBOX_TOOL`, all `CLAUDE_*`, all `CODEX_*`, and all `OPENCODE_*`) are resolved per-knob from four sources in priority order:
@@ -220,6 +249,7 @@ Current test suites:
 - `tests/bwrap/test.sh` — bwrap argv assembly (interactive keeps `--die-with-parent`; `BWRAP_DETACHED` omits it; `BWRAP_GENERATED_DIR` relocates the gitconfig) plus real-bubblewrap integration: reference confinement (workspace writable, outside blocked, `IS_SANDBOX` set), a stub host tool run inside the sandbox without docker, and a detached `serve` lifecycle with a fake `opencode` (start reachable on host loopback, stop tears it down). Skipped when `bwrap` or unprivileged user namespaces are unavailable.
 - `tests/serve/test.sh` — stubbed unit tests for `serve start|stop|attach`: Docker command assembly for v1/v2, password forwarding by name, and the bwrap path (detached argv without `--die-with-parent`, `serve.state`, the password absent from argv, `stop` signalling the recorded process group, and `attach` building the interactive sandbox).
 - `tests/openchamber/test.sh` — stubbed unit tests for the `openchamber start|stop` wiring: the sandboxed server starts first, the host UI receives `OPENCODE_HOST` / `OPENCODE_SKIP_START=true` / `OPENCODE_PASSWORD`, the resolved UI port is recorded for `stop`, an already-running server is reused (Docker labels or a bwrap `serve.state`), the missing-binary guardrail fires before Docker, passwords default to a printed insecure value with a warning, and a v1 host OpenCode is refused under bwrap.
+- `tests/bump-version/test.sh` — runs `scripts/bump-version.sh` in throwaway git repos: patch/minor/major arithmetic, explicit versions, the `--no-commit`/`--no-tag`/`--dry-run` modes, and the guard rails (dirty tree, existing tag, same version, bad/missing selector).
 
 To add a new test suite, create `tests/<component>/test.sh` and make it executable. The runner picks it up automatically. A test script should print `PASS:` / `FAIL:` lines and exit non-zero on any failure.
 

@@ -10,6 +10,7 @@ This is a Docker-sandboxed coding-agent launcher with first-class Claude Code an
 | `share/ai-sandbox/docker-compose.yml` | Container definition and other runtime data files |
 | `packaging/PKGBUILD` | Arch Linux package recipe |
 | `install.sh` | Cross-platform install script (macOS, WSL, Linux) |
+| `scripts/bump-version.sh` | Dev-only version-bump helper (not installed) |
 | `README.md` | Full documentation |
 
 ## Rules
