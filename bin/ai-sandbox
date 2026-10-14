@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VERSION="0.7.1"
+VERSION="0.8.0"
 
 # --- Config resolution helpers (defined outside main guard for testability) ---
 
